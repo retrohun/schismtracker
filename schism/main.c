@@ -1142,6 +1142,9 @@ void schism_exit(int x)
 #ifdef USE_BZIP2
 	bzip2_quit();
 #endif
+#ifdef USE_LZMA
+	xz_quit();
+#endif
 
 	if (shutdown_process & EXIT_SAVECFG)
 		cfg_atexit_save();
@@ -1327,6 +1330,9 @@ int schism_main(int argc, char **argv)
 #endif
 #ifdef USE_BZIP2
 	bzip2_init();
+#endif
+#ifdef USE_LZMA
+	xz_init();
 #endif
 
 #if !defined(SCHISM_WIN32) && !defined(SCHISM_OS2) && !defined(SCHISM_XBOX)
