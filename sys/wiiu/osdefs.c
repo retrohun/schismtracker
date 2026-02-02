@@ -28,14 +28,17 @@
 
 #include <whb/proc.h>
 #include <sysapp/launch.h>
-
 #include <dirent.h>
+#include "devoptab.h"
 
 /* fixup HOME envvar */
 void wiiu_sysinit(int *pargc, char ***pargv)
 {
 	/* tell the wii u about us */
 	WHBProcInit();
+
+	/* Initialize FSA devoptabs */
+	FSADOT_Init();
 
 	char *ptr = NULL;
 
@@ -50,7 +53,7 @@ void wiiu_sysinit(int *pargc, char ***pargv)
 		ptr = str_dup("fs:/vol/external01"); // Make a guess anyway
 
 	if (chdir(ptr) != 0) {
-		DIR* dir = opendir("fs:/vol/external01");
+		DIR *dir = opendir("fs:/vol/external01");
 		free(ptr);
 		if (dir) {
 			// Ok at least the sd card works, there's some other dysfunction
@@ -58,7 +61,7 @@ void wiiu_sysinit(int *pargc, char ***pargv)
 			ptr = str_dup("fs:/vol/external01");
 		} else {
 			// What?
-			ptr = str_dup("fs:/");
+			ptr = str_dup("fs:/vol/external01");
 		}
 		chdir(ptr); // Hope that worked, otherwise we're hosed
 	}
@@ -68,6 +71,8 @@ void wiiu_sysinit(int *pargc, char ***pargv)
 
 void wiiu_sysexit(void)
 {
+	FSADOT_Quit();
+
 	/* hmph */
 	WHBProcShutdown();
 
