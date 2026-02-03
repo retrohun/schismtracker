@@ -106,6 +106,9 @@ static const char *wii_getdevname(size_t i)
 		/* ETicket services -- contains nothing unless you do
 		 * manual path manipulation */
 		|| !strcmp(dev->name, "es")
+#elif defined(SCHISM_WIIU)
+		/* default devoptab */
+		|| !strcmp(dev->name, "fs")
 #endif
 	)
 		return NULL;
