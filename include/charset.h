@@ -91,6 +91,7 @@ typedef enum {
 	CHARSET_ERROR_DECODE = -5,
 	CHARSET_ERROR_ENCODE = -6,
 	CHARSET_ERROR_NOMEM = -7,
+	CHARSET_ERROR_NOTENOUGHSPACE = -8,
 } charset_error_t;
 
 enum {
@@ -189,5 +190,11 @@ void *charset_iconv_easy(const void *in, charset_t inset, charset_t outset) {
 		return out;
 	return NULL;
 }
+
+struct charset_iconv_v2;
+
+struct charset_iconv_v2 *charset_iconv_v2_open(charset_t inset, charset_t outset, SCHISM_UNUSED uint32_t flags);
+charset_error_t charset_iconv_v2(struct charset_iconv_v2 *x, char **inbuf, size_t *inbufsz, char **outbuf, size_t *outbufsz);
+void charset_iconv_v2_close(struct charset_iconv_v2 *x);
 
 #endif /* SCHISM_CHARSET_H_ */

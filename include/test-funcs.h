@@ -218,4 +218,8 @@ TEST_FUNC(test_ver_parse_schism_version)
 TEST_FUNC(test_ver_parse_ctimestamp)
 TEST_FUNC(test_ver_parse_cdate)
 
+TEST_FUNC(test_charset_iconv_v2)
+TEST_FUNC(test_charset_iconv_v2_partialbyte)
+TEST_FUNC(test_charset_iconv_v2_partialcode)
+
 #undef TEST_FUNC

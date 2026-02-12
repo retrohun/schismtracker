@@ -364,10 +364,12 @@ static void windows1252_to_ucs4(charset_decode_t *decoder)
 
 /* ------------------------------------------------------------------------ */
 
+typedef void (*ce_write)(void *userdata, const void *buf, size_t sz);
+
 #define CHARSET_ENCODE_ERROR (-1)
 #define CHARSET_ENCODE_SUCCESS (0)
 
-static int ucs4_to_utf8(uint32_t ch, disko_t* out)
+static int ucs4_to_utf8(uint32_t ch, void *userdata, ce_write w)
 {
 	unsigned char out_b[4];
 	size_t len = 0;
@@ -388,7 +390,7 @@ static int ucs4_to_utf8(uint32_t ch, disko_t* out)
 		out_b[len++] = (unsigned char)((ch & 0x3F) | 0x80);
 	} else return CHARSET_ENCODE_ERROR; /* ZOMG NO WAY */
 
-	disko_write(out, out_b, len);
+	w(userdata, out_b, len);
 
 	return len;
 }
@@ -833,7 +835,7 @@ int char_unicode_to_itf(uint32_t c)
 	return -1;
 }
 
-static int ucs4_to_cp437(uint32_t ch, disko_t* out)
+static int ucs4_to_cp437(uint32_t ch, void *userdata, ce_write w)
 {
 	uint8_t out_c8;
 	int out_c;
@@ -841,12 +843,12 @@ static int ucs4_to_cp437(uint32_t ch, disko_t* out)
 	out_c = char_unicode_to_cp437(ch);
 	out_c8 = (out_c < 0) ? '?' : out_c;
 
-	disko_write(out, &out_c8, sizeof(out_c8));
+	w(userdata, &out_c8, sizeof(out_c8));
 
 	return CHARSET_ENCODE_SUCCESS;
 }
 
-static int ucs4_to_itf(uint32_t ch, disko_t *out)
+static int ucs4_to_itf(uint32_t ch, void *userdata, ce_write w)
 {
 	uint8_t out_c8;
 	int out_c;
@@ -854,13 +856,13 @@ static int ucs4_to_itf(uint32_t ch, disko_t *out)
 	out_c = char_unicode_to_itf(ch);
 	out_c8 = (out_c < 0) ? '?' : out_c;
 
-	disko_write(out, &out_c8, sizeof(out_c8));
+	w(userdata, &out_c8, sizeof(out_c8));
 
 	return CHARSET_ENCODE_SUCCESS;
 }
 
 #define ENCODE_UTF16_VARIANT(x) \
-	static int ucs4_to_utf16##x(uint32_t ch, disko_t* out) \
+	static int ucs4_to_utf16##x(uint32_t ch, void *userdata, ce_write w) \
 	{ \
 		uint16_t out_b[2]; \
 		size_t len = 0; \
@@ -875,7 +877,7 @@ static int ucs4_to_itf(uint32_t ch, disko_t *out)
 			out_b[len++] = bswap##x##16(w2); \
 		} else return CHARSET_ENCODE_ERROR; \
 	\
-		disko_write(out, out_b, len * 2);\
+		w(userdata, out_b, len * 2);\
 	\
 		return CHARSET_ENCODE_SUCCESS; \
 	}
@@ -886,14 +888,14 @@ ENCODE_UTF16_VARIANT(BE)
 #undef ENCODE_UTF16_VARIANT
 
 #define ENCODE_UCS2_VARIANT(x) \
-	static int ucs4_to_ucs2##x(uint32_t ch, disko_t* out) \
+	static int ucs4_to_ucs2##x(uint32_t ch, void *userdata, ce_write w) \
 	{ \
 		if (ch >= 0x10000) \
 			return CHARSET_ERROR_ENCODE; \
 	\
 		uint16_t ch16 = bswap##x##16(ch); \
 	\
-		disko_write(out, &ch16, sizeof(ch16)); \
+		w(userdata, &ch16, sizeof(ch16)); \
 	\
 		return CHARSET_ENCODE_SUCCESS; \
 	}
@@ -904,10 +906,10 @@ ENCODE_UCS2_VARIANT(BE)
 #undef ENCODE_UCS2_VARIANT
 
 #define ENCODE_UCS4_VARIANT(x) \
-	static int ucs4_to_ucs4##x(uint32_t ch, disko_t* out) \
+	static int ucs4_to_ucs4##x(uint32_t ch, void *userdata, ce_write w) \
 	{ \
 		ch = bswap##x##32(ch); \
-		disko_write(out, &ch, sizeof(ch)); \
+		w(userdata, &ch, sizeof(ch)); \
 		return CHARSET_ENCODE_SUCCESS; \
 	}
 
@@ -926,9 +928,9 @@ static void wchar_to_ucs4(charset_decode_t *decoder)
 	return (win32_ntver_atleast(5, 0, 0) ? utf16LE_to_ucs4 : ucs2LE_to_ucs4)(decoder);
 }
 
-static int ucs4_to_wchar(uint32_t ch, disko_t *out)
+static int ucs4_to_wchar(uint32_t ch, void *userdata, ce_write w)
 {
-	return (win32_ntver_atleast(5, 0, 0) ? ucs4_to_utf16LE : ucs4_to_ucs2LE)(ch, out);
+	return (win32_ntver_atleast(5, 0, 0) ? ucs4_to_utf16LE : ucs4_to_ucs2LE)(ch, userdata, w);
 }
 
 static void ansi_to_ucs4(charset_decode_t *decoder)
@@ -988,16 +990,19 @@ static void ansi_to_ucs4(charset_decode_t *decoder)
 	decoder->codepoint = wcd.codepoint;
 }
 
-static int ucs4_to_ansi(uint32_t ch, disko_t *out)
+static int ucs4_to_ansi(uint32_t ch, void *userdata, ce_write w)
 {
 	uint16_t out_b[2];
 	size_t len = 0;
 	char *buf;
 	int buflen;
+	UINT acp;
 
-	switch (GetACP()) {
+	acp = GetACP();
+
+	switch (acp) {
 	case 437:
-		return ucs4_to_cp437(ch, out);
+		return ucs4_to_cp437(ch, userdata, w);
 	}
 
 	if (win32_ntver_atleast(5, 0, 0)) {
@@ -1020,7 +1025,7 @@ static int ucs4_to_ansi(uint32_t ch, disko_t *out)
 	 * for anything other than UTF-8. Thus we get sporadic failures when
 	 * converting to/from ACP. This is less of a problem for old systems,
 	 * where everything is going to be in ACP anyway. */
-	buflen = WideCharToMultiByte(CP_ACP, 0, out_b, len, NULL, 0, NULL, NULL);
+	buflen = WideCharToMultiByte(acp, 0, out_b, len, NULL, 0, NULL, NULL);
 	if (buflen <= 0)
 		return CHARSET_ENCODE_ERROR;
 
@@ -1028,13 +1033,13 @@ static int ucs4_to_ansi(uint32_t ch, disko_t *out)
 	if (!buf)
 		return CHARSET_ENCODE_ERROR; /* NOMEM ? */
 
-	buflen = WideCharToMultiByte(CP_ACP, 0, out_b, len, buf, buflen, NULL, NULL);
+	buflen = WideCharToMultiByte(acp, 0, out_b, len, buf, buflen, NULL, NULL);
 	if (buflen <= 0) {
 		free(buf);
 		return CHARSET_ENCODE_ERROR;
 	}
 
-	disko_write(out, buf, buflen);
+	w(userdata, buf, buflen);
 
 	free(buf);
 
@@ -1046,7 +1051,7 @@ static int ucs4_to_ansi(uint32_t ch, disko_t *out)
 
 /* function LUT here */
 typedef void (*charset_conv_to_ucs4_func)(charset_decode_t *decoder);
-typedef int (*charset_conv_from_ucs4_func)(uint32_t, disko_t*);
+typedef int (*charset_conv_from_ucs4_func)(uint32_t, void*, ce_write);
 
 static const charset_conv_to_ucs4_func conv_to_ucs4_funcs[] = {
 	[CHARSET_UTF8] = utf8_to_ucs4,
@@ -1098,6 +1103,22 @@ static const charset_conv_from_ucs4_func conv_from_ucs4_funcs[] = {
 	[CHARSET_WCHAR_T] = NULL,
 #endif
 };
+
+SCHISM_CONST static charset_conv_to_ucs4_func charset_iconv_lookup_conv_to_ucs4(charset_t inset)
+{
+	if (inset >= ARRAY_SIZE(conv_to_ucs4_funcs))
+		return NULL;
+
+	return conv_to_ucs4_funcs[inset];
+}
+
+SCHISM_CONST static charset_conv_from_ucs4_func charset_iconv_lookup_conv_from_ucs4(charset_t inset)
+{
+	if (inset >= ARRAY_SIZE(conv_from_ucs4_funcs))
+		return NULL;
+
+	return conv_from_ucs4_funcs[inset];
+}
 
 /* for debugging */
 SCHISM_CONST const char* charset_iconv_error_lookup(charset_error_t err)
@@ -1164,6 +1185,11 @@ static const size_t charset_size_estimate_divisor[] = {
  *     charset_iconv(cp437, &utf8, CHARSET_CP437, CHARSET_UTF8);
  * 
  * [out] must be free'd by the caller */
+static void ce_write_disko(void *userdata, const void *buf, size_t x)
+{
+	disko_write(userdata, buf, x);
+}
+
 CHARSET_VARIATION(internal)
 {
 	charset_decode_t decoder = {0};
@@ -1199,7 +1225,7 @@ CHARSET_VARIATION(internal)
 			return CHARSET_ERROR_DECODE;
 		}
 
-		int out_needed = conv_from_ucs4_func(decoder.codepoint, &ds);
+		int out_needed = conv_from_ucs4_func(decoder.codepoint, &ds, ce_write_disko);
 		if (out_needed < 0) {
 			disko_memclose(&ds, 0);
 			return CHARSET_ERROR_ENCODE;
@@ -1659,4 +1685,150 @@ charset_error_t charset_decode_next(charset_decode_t *decoder, charset_t inset)
 		return CHARSET_ERROR_DECODE;
 
 	return CHARSET_ERROR_SUCCESS;
+}
+
+/* ----------------------------------------------------------------------- */
+/* version 2 API */
+
+/* Maximum character output; should be enough to hold output for one
+ * codepoint in every output case */
+#define MAXCHAROUT (4)
+
+struct charset_iconv_v2 {
+	charset_t inset;
+	charset_t outset;
+
+	/* conversion functions, populated by the init func */
+	charset_conv_to_ucs4_func inconv;
+	charset_conv_from_ucs4_func outconv;
+
+	/* decoder */
+	charset_decode_t decoder;
+
+	unsigned char outbuf[MAXCHAROUT];
+	uint_fast8_t outbufsize; /* if > 0, that means last write was partial */
+};
+
+static void ce_write_icon(void *userdata, const void *buf, size_t sz)
+{
+	struct charset_iconv_v2 *x = userdata;
+
+	SCHISM_RUNTIME_ASSERT((x->outbufsize + sz) <= MAXCHAROUT,
+		"Pending writes should never ever exceed MAXCHAROUT");
+
+	memcpy(x->outbuf + x->outbufsize, buf, sz);
+	x->outbufsize += sz;
+}
+
+/* !!! TODO: Actually use the flags option.
+ * I'm doing it the microsoft way; we could define replacement chars etc. */
+struct charset_iconv_v2 *charset_iconv_v2_open(charset_t inset, charset_t outset, SCHISM_UNUSED uint32_t flags)
+{
+	struct charset_iconv_v2 *x;
+
+	x = malloc(sizeof(*x));
+	if (!x)
+		return NULL;
+
+	x->inset = inset;
+	x->outset = outset;
+
+	x->inconv = charset_iconv_lookup_conv_to_ucs4(inset);
+	x->outconv = charset_iconv_lookup_conv_from_ucs4(outset);
+
+	if (!x->inconv || !x->outconv) {
+		/* Invalid selector */
+		free(x);
+		return NULL;
+	}
+
+	/* ugh */
+	x->decoder.state = DECODER_STATE_NEED_MORE;
+
+	memset(x->outbuf, 0, sizeof(x->outbuf));
+	x->outbufsize = 0;
+
+	return x;
+}
+
+charset_error_t charset_iconv_v2(struct charset_iconv_v2 *x, char **inbuf, size_t *inbufsz, char **outbuf, size_t *outbufsz)
+{
+	charset_decode_t *decoder;
+
+	if (x->outbufsize > 0) {
+		/* On a previous call, we had an encode that could not fit into the
+		 * output buffer. Try to do it now. */
+
+		if (*outbufsz < x->outbufsize)
+			return CHARSET_ERROR_NOTENOUGHSPACE;
+
+		/* Write it into the output */
+		memcpy(*outbuf, x->outbuf, x->outbufsize);
+		*outbuf += x->outbufsize;
+		*outbufsz -= x->outbufsize;
+
+		x->outbufsize = 0;
+	}
+
+	/* Set up decoder */
+	decoder = &x->decoder;
+
+	if (decoder->state < 0) {
+		/* If a previous call failed, don't try anything sneaky */
+		return CHARSET_ERROR_DECODE;
+	}
+
+	decoder->in = *inbuf;
+	decoder->offset = 0;
+	decoder->size = *inbufsz;
+
+	while (decoder->size > 0) {
+		int r;
+
+		/* hax */
+		decoder->state = DECODER_STATE_NEED_MORE;
+
+		x->inconv(decoder);
+		if (decoder->state == DECODER_STATE_OVERFLOWED) {
+			/* Reached the end of the buffer */
+			decoder->state = DECODER_STATE_NEED_MORE;
+			break;
+		} else if (decoder->state < 0) {
+			/* Something has gone horribly wrong */
+			return CHARSET_ERROR_DECODE;
+		}
+
+		/* now encode into our special buffer */
+		r = x->outconv(decoder->codepoint, x, ce_write_icon);
+		if (r < 0)
+			return CHARSET_ERROR_ENCODE;
+
+		/* Make sure we have enough space in the output buffer */
+		if (*outbufsz < x->outbufsize)
+			break; /* Can't decode any more */
+
+		/* Otherwise we can write it directly into the output */
+		memcpy(*outbuf, x->outbuf, x->outbufsize);
+		*outbuf += x->outbufsize;
+		*outbufsz -= x->outbufsize;
+
+		x->outbufsize = 0;
+	}
+
+	/* bring it all together now */
+	*inbuf += decoder->offset;
+	*inbufsz -= decoder->offset;
+
+	/* CHARSET_ERROR_NOTENOUGHSPACE means, there's not enough
+	 * space in the output buffer */
+	if ((*inbufsz > 0) || (x->outbufsize > 0))
+		return CHARSET_ERROR_NOTENOUGHSPACE;
+
+	/* "error success" okay. */
+	return CHARSET_ERROR_SUCCESS;
+}
+
+void charset_iconv_v2_close(struct charset_iconv_v2 *x)
+{
+	free(x);
 }

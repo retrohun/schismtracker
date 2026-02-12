@@ -751,7 +751,8 @@ schismtrackertest_SOURCES = \
 	test/cases/str.c			\
 	test/cases/util.c			\
 	test/cases/video.c			\
-	test/cases/version.c
+	test/cases/version.c		\
+	test/cases/charset.c
 
 # err, this is flaky, but okay for now i guess
 mains =									\
