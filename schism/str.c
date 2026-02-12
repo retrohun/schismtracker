@@ -510,7 +510,12 @@ char *str_concat(const char *s, ...)
 }
 
 /* --------------------------------------------------------------------- */
-/* Functions for working with Pascal strings. */
+/* Functions for working with Pascal strings.
+ * Pascal strings are basically just a stream of bytes, like C strings.
+ * However, the first byte is used as the length.
+ * This means they are limited to a length of 255 in their very nature.
+ * These kinds of strings are used fairly often in the wild, with
+ * larger types serving as the length (see the Win32 BSTR type). */
 
 void str_to_pascal(const char *cstr, unsigned char pstr[256], int *truncated)
 {
@@ -520,12 +525,14 @@ void str_to_pascal(const char *cstr, unsigned char pstr[256], int *truncated)
 		*truncated = (len > 255);
 
 	pstr[0] = MIN(len, 255);
-	memcpy(&pstr[1], cstr, pstr[0]);
+	if (pstr[0] > 0)
+		memcpy(&pstr[1], cstr, pstr[0]);
 }
 
 void str_from_pascal(const unsigned char pstr[256], char cstr[256])
 {
-	memcpy(cstr, pstr + 1, pstr[0]);
+	if (pstr[0] > 0)
+		memcpy(cstr, pstr + 1, pstr[0]);
 	cstr[pstr[0]] = 0;
 }
 
