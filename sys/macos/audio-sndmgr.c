@@ -173,11 +173,16 @@ static uint32_t sndmgr_audio_device_count(uint32_t flags)
 			SCHISM_RUNTIME_ASSERT(hname, "need to be able to get the device name");
 
 			err = GetComponentInfo(cpnt, &desc, hname, NULL, NULL);
-			if (err == noErr) {
+			if (err == noErr && hname) {
+				/* God, I hate this. We shouldn't have to convert
+				 * the Pascal string to a C string just to then
+				 * convert it to Unicode. */
 				char cstr[256];
 
-				/* Mac OS is Pascal-coded */
+				/* Lock the handle for good measure */
+				HLock(hname);
 				str_from_pascal((unsigned char *)*hname, cstr);
+				HUnlock(hname);
 
 				/* Audio device names are UTF-8 internally */
 				devices[i].desc = charset_iconv_easy(cstr,
