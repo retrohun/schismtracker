@@ -561,6 +561,7 @@ static int load_xm_instruments(song_t *song, struct xm_file_header *hdr, slurp_t
 		}
 		song->instruments[ni] = ins = csf_allocate_instrument();
 
+		SCHISM_STATIC_ASSERT(sizeof(ins->name) > 22, "space assumption");
 		slurp_read(fp, ins->name, 22);
 		ins->name[22] = '\0';
 		if ((detected & ID_DIGITRAK) && memchr(ins->name, '\0', 22) != NULL)
@@ -610,27 +611,10 @@ static int load_xm_instruments(song_t *song, struct xm_file_header *hdr, slurp_t
 			continue;
 		}
 
-		for (n = 0; n < 12; n++)
+		for (n = 0; n < 120; n++)
 			ins->note_map[n] = n + 1;
-		for (; n < 96 + 12; n++) {
-			int x;
-
-			ins->note_map[n] = n + 1;
-
-			/* WEIRD: some XMs are weirdly corrupted. For example, try
-			 * loading "going nuts.xm" without this hack; there seems to be
-			 * a consistent (and completely wrong) offset in the sample map
-			 * for instruments 1 through 10. Some instruments are fine, but
-			 * it seems to grow worse. Maybe this is a bug in BoobieSqueezer? */
-			x = slurp_getc(fp);
-			if (x >= 0 && x < nsmp) {
-				ins->sample_map[n] = x + abssamp;
-			} else if (ins->sample_map[n - 1] != NOTE_NONE) {
-				ins->sample_map[n] = ins->sample_map[n - 1];
-			}
-		}
-		for (; n < 120; n++)
-			ins->note_map[n] = n + 1;
+		for (n = 12; n < 108; n++)
+			ins->sample_map[n] = xm_getc(fp, 0) + abssamp;
 
 		// envelopes. XM stores this in a hilariously bad format
 		struct {
@@ -760,8 +744,8 @@ static int load_xm_instruments(song_t *song, struct xm_file_header *hdr, slurp_t
 		the instrument header size 263 bytes), but ft2 is really writing the midi settings
 		there, at least in the first 7 bytes. (as far as i can tell, the rest of the bytes
 		are always zero) */
-		int midi_enabled = slurp_getc(fp); // instrument midi enable = 0/1
-		b = slurp_getc(fp); // midi transmit channel = 0-15
+		int midi_enabled = xm_getc(fp, 0); // instrument midi enable = 0/1
+		b = xm_getc(fp, 0); // midi transmit channel = 0-15
 		ins->midi_channel_mask = (midi_enabled == 1) ? 1 << MIN(b, 15) : 0;
 		slurp_read(fp, &w, 2); // midi program = 0-127
 		w = bswapLE16(w);
