@@ -679,6 +679,9 @@ size_t slurp_limit_count(slurp_t *t, size_t count)
 {
 	int64_t pos;
 
+	if (slurp_eof(t))
+		return 0;
+
 	if (!t->limit)
 		return count;
 
@@ -689,26 +692,21 @@ size_t slurp_limit_count(slurp_t *t, size_t count)
 
 size_t slurp_peek(slurp_t *t, void *ptr, size_t count)
 {
-	size_t read_bytes;
+	size_t read_bytes = slurp_limit_count(t, count);
 
-	if (!count || slurp_eof(t))
-		return 0;
+	if (read_bytes > 0) {
+		if (t->peek) {
+			read_bytes = t->peek(t, ptr, read_bytes);
+		} else {
+			/* cache current position */
+			int64_t pos = slurp_tell(t);
+			if (pos < 0)
+				return 0;
 
-	read_bytes = slurp_limit_count(t, count);
-	if (!read_bytes)
-		return 0; /* ehhh */
+			read_bytes = t->read(t, ptr, read_bytes);
 
-	if (t->peek) {
-		read_bytes = t->peek(t, ptr, read_bytes);
-	} else {
-		/* cache current position */
-		int64_t pos = slurp_tell(t);
-		if (pos < 0)
-			return 0;
-
-		read_bytes = t->read(t, ptr, read_bytes);
-
-		slurp_seek(t, pos, SEEK_SET);
+			slurp_seek(t, pos, SEEK_SET);
+		}
 	}
 
 	slurp_fill_remaining(t, ptr, read_bytes, count);
@@ -719,20 +717,15 @@ size_t slurp_peek(slurp_t *t, void *ptr, size_t count)
 
 size_t slurp_read(slurp_t *t, void *ptr, size_t count)
 {
-	size_t read_bytes;
+	size_t read_bytes = slurp_limit_count(t, count);
 
-	if (!count || slurp_eof(t))
-		return 0;
-
-	read_bytes = slurp_limit_count(t, count);
-	if (!read_bytes)
-		return 0; /* ehhh */
-
-	if (t->read) {
-		read_bytes = t->read(t, ptr, read_bytes);
-	} else {
-		read_bytes = t->peek(t, ptr, read_bytes);
-		slurp_seek(t, read_bytes, SEEK_CUR);
+	if (read_bytes > 0) {
+		if (t->read) {
+			read_bytes = t->read(t, ptr, read_bytes);
+		} else {
+			read_bytes = t->peek(t, ptr, read_bytes);
+			slurp_seek(t, read_bytes, SEEK_CUR);
+		}
 	}
 
 	slurp_fill_remaining(t, ptr, read_bytes, count);
