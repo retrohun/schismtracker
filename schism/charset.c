@@ -1326,7 +1326,7 @@ int charset_to_unicode(struct charset_iconv_v2 *x, char **inbuf, size_t *insize)
 #elif defined(SCHISM_WIN32)
 	/* FIXME it would probably be more worthwhile to try and find the closest
 	 * value to our thing by calling MultiByteToWideChar with a output buffer
-	 * of NULL and length 0 */
+	 * of NULL and length 0 (what XBOX does) */
 
 	/* Make up for windows having a shit API by finding the largest value
 	 * that doesn't return an error. We do this through a really cursed
@@ -1391,23 +1391,31 @@ int charset_to_unicode(struct charset_iconv_v2 *x, char **inbuf, size_t *insize)
 	x->uniconvlen = r;
 	return 0; /* Ok */
 #elif defined(SCHISM_XBOX)
-	/* This could be better. Somehow it's still better than Windows */
-	NTSTATUS nt;
-	size_t i, len;
 	ULONG bytes;
+	size_t i, len;
 	char *in;
 
 	in = *inbuf;
 	len = *insize;
 
-	for (i = 0; i < len; i++) {
+	if (!len)
+		return -1; /* What? */
+
+	/* Get the maximum amount of chars we can convert */
+	for (i = 1; i <= len; i++) {
 		RtlMultiByteToUnicodeSize(&bytes, in, i);
 		if (bytes >= sizeof(x->uniconv))
 			break;
 	}
 
+	/* i - 1 was the last conversion to fit in our buffer */
+	if (!--i)
+		return -1; /* Can't even convert one character?? */
+
 	/* We can store `bytes / 2` unicode chars */
-	RtlMultiByteToUnicodeN(x->uniconv, bytes, NULL, in, i);
+	RtlMultiByteToUnicodeN(x->uniconv, sizeof(x->uniconv), &bytes, in, i);
+
+	x->uniconvlen = bytes >> 1;
 
 	*inbuf += i;
 	*insize -= i;
