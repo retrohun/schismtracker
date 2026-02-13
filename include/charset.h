@@ -191,6 +191,9 @@ void *charset_iconv_easy(const void *in, charset_t inset, charset_t outset) {
 	return NULL;
 }
 
+/* v2 API. This is basically just the POSIX API.
+ * If in doubt, use this; the "v1" API above is basically just a compatibility
+ * layer over this. */
 struct charset_iconv_v2;
 
 struct charset_iconv_v2 *charset_iconv_v2_open(charset_t inset, charset_t outset, SCHISM_UNUSED uint32_t flags);

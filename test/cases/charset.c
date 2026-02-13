@@ -108,3 +108,27 @@ TEST_CHARSET_ICONV_V2_BEGIN(_partialcode, CHARSET_UTF8, CHARSET_UTF16BE, "\xC3\x
 	ASSERT_PRINTF(rc >= 0, "%zu %d %zu", inbufsz, (int)rc, outbufsz);
 }
 TEST_CHARSET_ICONV_V2_END
+
+#ifdef SCHISM_WIN32
+/* FIXME: Find some way to tell the ANSI code that we're running
+ * a test, and to always assume Windows-1252; this would allow
+ * testing the non-ASCII chars */
+
+TEST_CHARSET_ICONV_V2_BEGIN(_ansi, CHARSET_ANSI, CHARSET_UTF8, "himynameiscarmenwinstead", "himynameiscarmenwinstead")
+{
+	charset_error_t r;
+
+	r = charset_iconv_v2(x, &inbufptr, &inbufsz, &outbufptr, &outbufsz);
+	ASSERT_PRINTF(r >= 0, "%d", (int)r);
+}
+TEST_CHARSET_ICONV_V2_END
+
+TEST_CHARSET_ICONV_V2_BEGIN(_ansiout, CHARSET_UTF8, CHARSET_ANSI, "himynameiscarmenwinstead", "himynameiscarmenwinstead")
+{
+	charset_error_t r;
+
+	r = charset_iconv_v2(x, &inbufptr, &inbufsz, &outbufptr, &outbufsz);
+	ASSERT_PRINTF(r >= 0, "%d", (int)r);
+}
+TEST_CHARSET_ICONV_V2_END
+#endif

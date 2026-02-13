@@ -80,4 +80,7 @@ int str_realloc(char **output, const char *input, size_t len);
 void str_to_pascal(const char *cstr, unsigned char pstr[256], int *truncated);
 void str_from_pascal(const unsigned char pstr[256], char cstr[256]);
 
+/* doesn't really belong here but oh well */
+char *mem_mem(const char *haystack, size_t haystacksz, const char *needle, size_t needlesz);
+
 #endif

@@ -932,119 +932,6 @@ static int ucs4_to_wchar(uint32_t ch, void *userdata, ce_write w)
 {
 	return (win32_ntver_atleast(5, 0, 0) ? ucs4_to_utf16LE : ucs4_to_ucs2LE)(ch, userdata, w);
 }
-
-static void ansi_to_ucs4(charset_decode_t *decoder)
-{
-	/* half-assed ANSI to UCS-4 converter */
-	size_t i;
-	size_t j;
-	wchar_t wc[8];
-	int r = 0;
-	charset_decode_t wcd;
-
-	switch (GetACP()) {
-	//case 1252:
-	//	windows1252_to_ucs4(decoder);
-	//	return;
-	case 437:
-		cp437_to_ucs4(decoder);
-		return;
-	}
-
-	/* ok, here's the thing: the ANSI windows codepage can be variable width,
-	 * which means we can't simply convert one byte. eventually I'd like to
-	 * do one big conversion (maybe 512 chars at a time) and cache it for
-	 * later decoding, but eh
-	 *
-	 * This seems to work right, but only for windows-1252; shift-jis and
-	 * other var-width charsets haven't been tested. */
-	for (i = 1; i < (decoder->size - decoder->offset); i++) {
-		/* this is royally stupid */
-		j = 0;
-		do {
-			j++;
-			r = MultiByteToWideChar(CP_ACP, 0, decoder->in + decoder->offset, i, wc, j);
-		} while (j < 8 && r == 0 && GetLastError() == ERROR_INSUFFICIENT_BUFFER);
-
-		if (r != 0)
-			break;
-	}
-
-	/* :) */
-	decoder->offset += i;
-
-	if (r == 0) {
-		decoder->state = DECODER_STATE_ILL_FORMED;
-		decoder->codepoint = 0;
-		return;
-	}
-
-	wcd.in = (const unsigned char *)wc;
-	wcd.offset = 0;
-	wcd.size = (r * sizeof(wchar_t));
-
-	/* convert wchar to utf-8 */
-	wchar_to_ucs4(&wcd);
-
-	decoder->state = wcd.state;
-	decoder->codepoint = wcd.codepoint;
-}
-
-static int ucs4_to_ansi(uint32_t ch, void *userdata, ce_write w)
-{
-	uint16_t out_b[2];
-	size_t len = 0;
-	char *buf;
-	int buflen;
-	UINT acp;
-
-	acp = GetACP();
-
-	switch (acp) {
-	case 437:
-		return ucs4_to_cp437(ch, userdata, w);
-	}
-
-	if (win32_ntver_atleast(5, 0, 0)) {
-		/* copied from ucs4_to_utf16LE */
-		if (ch < 0x10000) {
-			out_b[len++] = bswapLE16(ch);
-		} else if (ch < 0x110000) {
-			uint16_t w1 = 0xD800 + ((ch - 0x10000) >> 10);
-			uint16_t w2 = 0xDC00 + ((ch - 0x10000) & 0x3FF);
-
-			out_b[len++] = bswapLE16(w1);
-			out_b[len++] = bswapLE16(w2);
-		} else return CHARSET_ENCODE_ERROR;	
-	} else {
-		/* wchar_t is UCS-2 */
-		out_b[len++] = bswapLE16(ch);
-	}
-
-	/* WC_ERR_INVALID_CHARS would be nice here, but it's not supported
-	 * for anything other than UTF-8. Thus we get sporadic failures when
-	 * converting to/from ACP. This is less of a problem for old systems,
-	 * where everything is going to be in ACP anyway. */
-	buflen = WideCharToMultiByte(acp, 0, out_b, len, NULL, 0, NULL, NULL);
-	if (buflen <= 0)
-		return CHARSET_ENCODE_ERROR;
-
-	buf = malloc(buflen);
-	if (!buf)
-		return CHARSET_ENCODE_ERROR; /* NOMEM ? */
-
-	buflen = WideCharToMultiByte(acp, 0, out_b, len, buf, buflen, NULL, NULL);
-	if (buflen <= 0) {
-		free(buf);
-		return CHARSET_ENCODE_ERROR;
-	}
-
-	w(userdata, buf, buflen);
-
-	free(buf);
-
-	return CHARSET_ENCODE_SUCCESS;
-}
 #endif
 
 /* ----------------------------------------------------------------------- */
@@ -1069,7 +956,6 @@ static const charset_conv_to_ucs4_func conv_to_ucs4_funcs[] = {
 
 	[CHARSET_CHAR] = utf8_to_ucs4,
 #ifdef SCHISM_WIN32
-	[CHARSET_ANSI] = ansi_to_ucs4,
 	[CHARSET_WCHAR_T] = wchar_to_ucs4,
 #elif defined(SCHISM_XBOX)
 	[CHARSET_WCHAR_T] = utf16LE_to_ucs4,
@@ -1094,7 +980,6 @@ static const charset_conv_from_ucs4_func conv_from_ucs4_funcs[] = {
 
 	[CHARSET_CHAR] = ucs4_to_utf8,
 #ifdef SCHISM_WIN32
-	[CHARSET_ANSI] = ucs4_to_ansi,
 	[CHARSET_WCHAR_T] = ucs4_to_wchar,
 #elif defined(SCHISM_XBOX)
 	[CHARSET_WCHAR_T] = ucs4_to_utf16LE,
@@ -1140,13 +1025,12 @@ SCHISM_CONST const char* charset_iconv_error_lookup(charset_error_t err)
 		return "An error occurred when encoding";
 	case CHARSET_ERROR_NOMEM:
 		return "Out of memory";
+	case CHARSET_ERROR_NOTENOUGHSPACE:
+		return "Not enough space in output buffer";
 	default:
 		return "Unknown error";
 	}
 }
-
-#define CHARSET_VARIATION(name) \
-	static charset_error_t charset_iconv_##name##_(const void* in, void* out, charset_t inset, charset_t outset, size_t insize)
 
 static const size_t charset_size_estimate_divisor[] = {
 	[CHARSET_UCS4LE] = 4,
@@ -1172,107 +1056,6 @@ static const size_t charset_size_estimate_divisor[] = {
 #endif
 };
 
-/* our version of iconv; this has a much simpler API than the regular
- * iconv() because much of it isn't very necessary for our purposes
- *
- * note: do NOT put huge buffers into here, it will likely waste
- * lots of memory due to using a buffer of UCS4 inbetween
- *
- * all input is expected to be NULL-terminated
- *
- * example usage:
- *     unsigned char *cp437 = some_buf, *utf8 = NULL;
- *     charset_iconv(cp437, &utf8, CHARSET_CP437, CHARSET_UTF8);
- * 
- * [out] must be free'd by the caller */
-static void ce_write_disko(void *userdata, const void *buf, size_t x)
-{
-	disko_write(userdata, buf, x);
-}
-
-CHARSET_VARIATION(internal)
-{
-	charset_decode_t decoder = {0};
-
-	decoder.in = in;
-	decoder.offset = 0;
-	decoder.size = insize;
-
-	if (inset >= ARRAY_SIZE(conv_to_ucs4_funcs) || outset >= ARRAY_SIZE(conv_from_ucs4_funcs))
-		return CHARSET_ERROR_UNIMPLEMENTED;
-
-	charset_conv_to_ucs4_func   conv_to_ucs4_func   = conv_to_ucs4_funcs[inset];
-	charset_conv_from_ucs4_func conv_from_ucs4_func = conv_from_ucs4_funcs[outset];
-
-	if (!conv_to_ucs4_func || !conv_from_ucs4_func)
-		return CHARSET_ERROR_UNIMPLEMENTED;
-
-	disko_t ds = {0};
-	if (insize != SIZE_MAX) {
-		/* if we know a size, give an estimate as to how
-		 * much space it'll take up. */
-		disko_memopen_estimate(&ds, (uint64_t)insize
-			* charset_size_estimate_divisor[outset]
-			/ charset_size_estimate_divisor[inset]);
-	} else {
-		disko_memopen(&ds);
-	}
-
-	do {
-		conv_to_ucs4_func(&decoder);
-		if (decoder.state < 0) {
-			disko_memclose(&ds, 0);
-			return CHARSET_ERROR_DECODE;
-		}
-
-		int out_needed = conv_from_ucs4_func(decoder.codepoint, &ds, ce_write_disko);
-		if (out_needed < 0) {
-			disko_memclose(&ds, 0);
-			return CHARSET_ERROR_ENCODE;
-		}
-	} while (decoder.state == DECODER_STATE_NEED_MORE);
-
-	// write a NUL terminator always
-	uint32_t x = 0;
-	disko_write(&ds, &x, sizeof(x));
-
-	disko_memclose(&ds, 1);
-
-	memcpy(out, &ds.data, sizeof(ds.data));
-
-	return CHARSET_ERROR_SUCCESS;
-}
-
-/* ----------------------------------------------------------------------- */
-
-#ifdef SCHISM_MACOS
-static size_t charset_nulterm_string_size(const void *in, charset_t inset)
-{
-	/* ugly */
-	charset_decode_t decoder = {0};
-	charset_conv_to_ucs4_func   conv_to_ucs4_func;
-
-	decoder.in = in;
-	decoder.size = SIZE_MAX;
-
-	if (inset >= ARRAY_SIZE(conv_to_ucs4_funcs))
-		return CHARSET_ERROR_UNIMPLEMENTED;
-
-	conv_to_ucs4_func   = conv_to_ucs4_funcs[inset];
-
-	if (!conv_to_ucs4_func)
-		return CHARSET_ERROR_UNIMPLEMENTED;
-
-	do {
-		conv_to_ucs4_func(&decoder);
-		if (decoder.state < 0)
-			return 0;
-	} while (decoder.state == DECODER_STATE_NEED_MORE);
-
-	return decoder.offset;
-}
-#endif
-
 /* ----------------------------------------------------------------------- */
 
 #if defined(SCHISM_XBOX)
@@ -1290,32 +1073,6 @@ static size_t charset_nulterm_string_size(const void *in, charset_t inset)
 # include <os2.h>
 #endif
 
-typedef charset_error_t (*charset_impl)(const void* in, void* out, charset_t inset, charset_t outset, size_t insize);
-
-static const charset_impl charset_impls[] = {
-	charset_iconv_internal_,
-};
-
-static charset_error_t charset_iconv_impl_(const void *in, void *out, charset_t inset, charset_t outset, size_t insize)
-{
-	static void *const null = NULL;
-	charset_error_t state = CHARSET_ERROR_UNIMPLEMENTED;
-
-	for (size_t i = 0; i < ARRAY_SIZE(charset_impls); i++) {
-		state = charset_impls[i](in, out, inset, outset, insize);
-		if (state == CHARSET_ERROR_SUCCESS)
-			return state;
-
-		memcpy(out, &null, sizeof(void *));
-
-		// give up if no memory left
-		if (state == CHARSET_ERROR_NOMEM)
-			return state;
-	}
-
-	return state;
-}
-
 #ifdef SCHISM_MACOS
 static inline SCHISM_ALWAYS_INLINE int charset_iconv_get_system_encoding_(TextEncoding *penc)
 {
@@ -1327,63 +1084,7 @@ static inline SCHISM_ALWAYS_INLINE int charset_iconv_get_system_encoding_(TextEn
 
 	return 1;
 }
-
-static charset_error_t charset_iconv_macos_preprocess_(const void *in, size_t insize, TextEncoding inenc, TextEncoding outenc, void *out, size_t *outsize)
-{
-	OSStatus err = noErr;
-
-	TECObjectRef tec = NULL;
-
-	err = TECCreateConverter(&tec, inenc, outenc);
-	if (err != noErr)
-		return CHARSET_ERROR_UNIMPLEMENTED;
-
-	const unsigned char *srcptr = in;
-
-	disko_t ds = {0};
-	if (disko_memopen_estimate(&ds, insize * 2) < 0) {
-		TECDisposeConverter(tec);
-		return CHARSET_ERROR_NOMEM;
-	}
-
-	do {
-		unsigned char buf[512];
-		ByteCount bytes_consumed; // I love consuming media!
-		ByteCount bytes_produced;
-
-		err = TECConvertText(tec, (ConstTextPtr)srcptr, insize, &bytes_consumed, (TextPtr)buf, sizeof(buf), &bytes_produced);
-		if (err != noErr && err != kTECOutputBufferFullStatus) {
-#ifdef SCHISM_CHARSET_DEBUG
-			log_appendf(4, "[MacOS] TECConvertText returned %d; giving up", (int)err);
-#endif
-			TECDisposeConverter(tec);
-			disko_memclose(&ds, 0);
-			return CHARSET_ERROR_DECODE;
-		}
-
-		// append to our heap buffer
-		disko_write(&ds, buf, bytes_produced);
-
-		srcptr += bytes_consumed;
-		insize -= bytes_consumed;
-	} while (err == kTECOutputBufferFullStatus);
-
-	// force write a NUL terminator
-	uint16_t x = 0;
-	disko_write(&ds, &x, sizeof(x));
-
-	disko_memclose(&ds, 1);
-
-	// put the fake stuff in
-	memcpy(out, &ds.data, sizeof(ds.data));
-	if (outsize)
-		*outsize = ds.length;
-
-	return CHARSET_ERROR_SUCCESS;
-}
-#endif
-
-#ifdef SCHISM_OS2
+#elif defined(SCHISM_OS2)
 static inline int charset_os2_get_sys_cp(ULONG *pcp)
 {
 	ULONG aulCP[3];
@@ -1401,6 +1102,7 @@ static inline int charset_os2_uconv_build(ULONG cp, UconvObject *puconv)
 {
 	UniChar cpname[16];
 	{
+		/* stupid */
 		char buf[16];
 
 		snprintf(buf, 16, "IBM-%lu", cp);
@@ -1411,263 +1113,6 @@ static inline int charset_os2_uconv_build(ULONG cp, UconvObject *puconv)
 	return !UniCreateUconvObject(cpname, puconv);
 }
 #endif
-
-charset_error_t charset_iconv(const void* in, void* out, charset_t inset, charset_t outset, size_t insize) {
-	// This hacky mess is here, specifically for being able to handle system-specific volatile charsets like:
-	//  Win32 - CHARSET_ANSI
-	//  OS/2  - CHARSET_DOSCP
-	//  MacOS - CHARSET_SYSTEMSCRIPT
-	// TODO: We also have to be able to handle this in charset_decode_next, since charset_stdlib uses it.
-	// Oh well.
-	charset_t insetfake = inset, outsetfake = outset;
-	const void *infake = in;
-	void *outfake;
-	size_t insizefake = insize;
-
-	charset_error_t state;
-	if (!in)
-		return CHARSET_ERROR_NULLINPUT;
-
-	if (!out)
-		return CHARSET_ERROR_NULLOUTPUT;
-
-	if (inset == outset)
-		return CHARSET_ERROR_INPUTISOUTPUT;
-
-	switch (inset) {
-#ifdef SCHISM_XBOX
-	case CHARSET_ANSI: {
-		size_t source_size = (insize != SIZE_MAX) ? insize : strlen(in);
-		ULONG size; /* in bytes */
-		WCHAR *wstr;
-
-		if (!NT_SUCCESS(RtlMultiByteToUnicodeSize(&size, (CHAR *)in, source_size)))
-			return CHARSET_ERROR_DECODE;
-
-		/* ReactOS source code doesn't append a NUL terminator.
-		 * I assume this is the Win32 behavior as well. */
-		wstr = mem_alloc(size + sizeof(WCHAR));
-
-		if (!NT_SUCCESS(RtlMultiByteToUnicodeN(wstr, size, NULL, (CHAR *)in, source_size))) {
-			free(wstr);
-			return CHARSET_ERROR_DECODE;
-		}
-
-		wstr[size >> 1] = '\0';
-
-		infake = wstr;
-		insetfake = CHARSET_WCHAR_T;
-		insizefake = (size + sizeof(WCHAR));
-		break;
-	}
-#endif
-#ifdef SCHISM_OS2
-	case CHARSET_DOSCP: {
-		ULONG cp;
-		if (!charset_os2_get_sys_cp(&cp))
-			return CHARSET_ERROR_UNIMPLEMENTED;
-
-		if (cp == 437) {
-			insetfake = inset = CHARSET_CP437;
-		} else if (cp == 1252) {
-			insetfake = inset = CHARSET_WINDOWS1252;
-		} else {
-			UconvObject uc;
-			if (!charset_os2_uconv_build(cp, &uc))
-				return CHARSET_ERROR_UNIMPLEMENTED; // probably
-
-			size_t alloc = 0;
-			uint16_t *ucs2 = NULL;
-			for (;;) {
-				free(ucs2);
-
-				alloc = (alloc) ? (alloc * 2) : 128;
-				ucs2 = mem_alloc(alloc * sizeof(*ucs2));
-
-				int rc = UniStrToUcs(uc, ucs2, (CHAR *)in, alloc);
-
-				if (rc == ULS_SUCCESS) {
-					break;
-				} else if (rc == ULS_BUFFERFULL) {
-					continue;
-				} else {
-					// some error decoding
-					free(ucs2);
-					return CHARSET_ERROR_DECODE;
-				}
-			}
-
-			infake = ucs2;
-			insetfake = CHARSET_UCS2;
-			insizefake = alloc * sizeof(*ucs2);
-		}
-		break;
-	}
-#endif
-#ifdef SCHISM_MACOS
-	case CHARSET_SYSTEMSCRIPT: {
-		TextEncoding hfsenc;
-		if (!charset_iconv_get_system_encoding_(&hfsenc))
-			return CHARSET_ERROR_UNIMPLEMENTED;
-
-		TextEncoding utf16enc = CreateTextEncoding(kTextEncodingUnicodeDefault, kTextEncodingDefaultVariant, kUnicode16BitFormat);
-
-		if (insize == SIZE_MAX)
-			insize = strlen(in) + 1;
-
-		state = charset_iconv_macos_preprocess_(in, insize, hfsenc, utf16enc, &infake, &insizefake);
-		if (state != CHARSET_ERROR_SUCCESS)
-			return state;
-
-		insetfake = CHARSET_UTF16;
-		break;
-	}
-#endif
-	default: break;
-	}
-
-	switch (outset) {
-#ifdef SCHISM_XBOX
-	case CHARSET_ANSI:
-		outsetfake = CHARSET_WCHAR_T;
-		break;
-#endif
-#ifdef SCHISM_MACOS
-	case CHARSET_SYSTEMSCRIPT:
-		outsetfake = CHARSET_UTF16;
-		break;
-#endif
-#ifdef SCHISM_OS2
-	case CHARSET_DOSCP: {
-		ULONG cp;
-		if (!charset_os2_get_sys_cp(&cp))
-			return CHARSET_ERROR_UNIMPLEMENTED;
-
-		if (cp == 437) {
-			outsetfake = outset = CHARSET_CP437;
-		} else {
-			outsetfake = CHARSET_UCS2;
-		}
-		break;
-	}
-#endif
-	default: break;
-	}
-
-	state = charset_iconv_impl_(infake, &outfake, insetfake, outsetfake, insizefake);
-
-	switch (inset) {
-#ifdef SCHISM_XBOX
-	case CHARSET_ANSI: {
-		free((void *)infake);
-		break;
-	}
-#endif
-#ifdef SCHISM_MACOS
-	case CHARSET_SYSTEMSCRIPT:
-		free((void *)infake);
-		break;
-#endif
-#ifdef SCHISM_OS2
-	case CHARSET_DOSCP:
-		free((void *)infake);
-		break;
-#endif
-	default: break;
-	}
-
-	switch (outset) {
-#ifdef SCHISM_XBOX
-	case CHARSET_ANSI: {
-		size_t source_size = wcslen(outfake) * sizeof(WCHAR);
-		ULONG size; /* in bytes */
-		CHAR *astr;
-
-		if (!NT_SUCCESS(RtlUnicodeToMultiByteSize(&size, outfake, source_size))) {
-			free(outfake);
-			return CHARSET_ERROR_ENCODE;
-		}
-
-		/* ReactOS source code doesn't append a NUL terminator.
-		 * I assume this is the Win32 behavior as well. */
-		astr = mem_alloc(size + sizeof(CHAR));
-
-		if (!NT_SUCCESS(RtlUnicodeToMultiByteN(astr, size, NULL, outfake, source_size))) {
-			free(outfake);
-			free(astr);
-			return CHARSET_ERROR_ENCODE;
-		}
-
-		astr[size] = '\0';
-
-		free(outfake);
-
-		memcpy(out, &astr, sizeof(void *));
-
-		break;
-	}
-#endif
-#ifdef SCHISM_OS2
-	case CHARSET_DOSCP: {
-		ULONG cp;
-		if (!charset_os2_get_sys_cp(&cp))
-			return CHARSET_ERROR_UNIMPLEMENTED;
-
-		UconvObject uc;
-		if (!charset_os2_uconv_build(cp, &uc))
-			return CHARSET_ERROR_UNIMPLEMENTED; // probably
-
-		size_t alloc = 256;
-		CHAR *sys = NULL;
-		for (;;) {
-			free(sys);
-
-			sys = mem_alloc(alloc * sizeof(*sys));
-
-			int rc = UniStrFromUcs(uc, sys, (UniChar *)outfake, alloc);
-
-			if (rc == ULS_SUCCESS) {
-				break;
-			} else if (rc == ULS_BUFFERFULL) {
-				alloc *= 2;
-				continue;
-			} else {
-				return CHARSET_ERROR_DECODE;
-			}
-		}
-
-		free(outfake);
-
-		memcpy(out, &sys, sizeof(void *));
-
-		break;
-	}
-#endif
-#ifdef SCHISM_MACOS
-	case CHARSET_SYSTEMSCRIPT: {
-		/* can we return size so we don't have to do this? */
-		size_t len = charset_nulterm_string_size(outfake, CHARSET_UTF16) + 2;
-
-		TextEncoding hfsenc;
-		if (!charset_iconv_get_system_encoding_(&hfsenc))
-			return CHARSET_ERROR_UNIMPLEMENTED;
-
-		TextEncoding utf16enc = CreateTextEncoding(kTextEncodingUnicodeDefault, kTextEncodingDefaultVariant, kUnicode16BitFormat);
-
-		state = charset_iconv_macos_preprocess_(outfake, len, utf16enc, hfsenc, out, NULL);
-
-		free(outfake);
-
-		break;
-	}
-#endif
-	default:
-		memcpy(out, &outfake, sizeof(void *));
-		break;
-	}
-
-	return state;
-}
 
 charset_error_t charset_decode_next(charset_decode_t *decoder, charset_t inset)
 {
@@ -1690,9 +1135,23 @@ charset_error_t charset_decode_next(charset_decode_t *decoder, charset_t inset)
 /* ----------------------------------------------------------------------- */
 /* version 2 API */
 
-/* Maximum character output; should be enough to hold output for one
- * codepoint in every output case */
-#define MAXCHAROUT (4)
+/* This is way more than enough */
+#define MAXCHAROUT (32)
+
+#if defined(SCHISM_WIN32) || defined(SCHISM_OS2) || defined(SCHISM_MACOS) || defined(SCHISM_XBOX)
+# define CHARSET_HAVE_UNIBUF 1
+#endif
+
+#if defined(SCHISM_WIN32) || defined(SCHISM_XBOX)
+# define CHARSET_NEEDS_UNIBUF(x) ((x) == CHARSET_ANSI)
+# define CHARSET_UNIBUF (CHARSET_WCHAR_T)
+#elif defined(SCHISM_OS2)
+# define CHARSET_NEEDS_UNIBUF(x) ((x) == CHARSET_DOSCP)
+# define CHARSET_UNIBUF (CHARSET_UCS2)
+#elif defined(SCHISM_MACOS)
+# define CHARSET_NEEDS_UNIBUF(x) ((x) == CHARSET_SYSTEMSCRIPT)
+# define CHARSET_UNIBUF (CHARSET_UCS2)
+#endif
 
 struct charset_iconv_v2 {
 	charset_t inset;
@@ -1707,6 +1166,29 @@ struct charset_iconv_v2 {
 
 	unsigned char outbuf[MAXCHAROUT];
 	uint_fast8_t outbufsize; /* if > 0, that means last write was partial */
+
+	/* Unicode conversion buffer. This should be pretty
+	 * large so we can decode a bunch of characters at once.
+	 *
+	 * NOTE: Currently as we only have at most one character set
+	 * per each platform that requires this, it's not necessary
+	 * to have separate buffers for input and output as having
+	 * the same charset for input and output is not allowed
+	 * anyway. If this ever is NOT the case (i.e. win32 OEM is
+	 * added) we will have to have separate buffers if we want
+	 * to allow ANSI -> OEM conversion */
+#ifdef CHARSET_HAVE_UNIBUF
+	uint16_t uniconv[256];
+	size_t uniconvlen;
+#endif
+
+#if defined(SCHISM_MACOS)
+	TECObjectRef tec;
+#elif defined(SCHISM_OS2)
+	UconvObject uc;
+#elif defined(SCHISM_WIN32)
+	UINT cp;
+#endif
 };
 
 static void ce_write_icon(void *userdata, const void *buf, size_t sz)
@@ -1716,8 +1198,19 @@ static void ce_write_icon(void *userdata, const void *buf, size_t sz)
 	SCHISM_RUNTIME_ASSERT((x->outbufsize + sz) <= MAXCHAROUT,
 		"Pending writes should never ever exceed MAXCHAROUT");
 
-	memcpy(x->outbuf + x->outbufsize, buf, sz);
-	x->outbufsize += sz;
+#ifdef CHARSET_HAVE_UNIBUF
+	if (CHARSET_NEEDS_UNIBUF(x->outset)) {
+		SCHISM_STATIC_ASSERT(sizeof(x->uniconv) >= MAXCHAROUT, "a");
+		SCHISM_RUNTIME_ASSERT((sz & 1) == 0, "buffer size is always multiple of 2");
+
+		memcpy(x->uniconv, buf, sz);
+		x->uniconvlen += sz;
+	} else
+#endif
+	{
+		memcpy(x->outbuf + x->outbufsize, buf, sz);
+		x->outbufsize += sz;
+	}
 }
 
 /* !!! TODO: Actually use the flags option.
@@ -1726,12 +1219,59 @@ struct charset_iconv_v2 *charset_iconv_v2_open(charset_t inset, charset_t outset
 {
 	struct charset_iconv_v2 *x;
 
+	if (inset == outset)
+		return NULL; /* Don't do this */
+
 	x = malloc(sizeof(*x));
 	if (!x)
 		return NULL;
 
 	x->inset = inset;
 	x->outset = outset;
+
+#ifdef CHARSET_HAVE_UNIBUF
+	if (CHARSET_NEEDS_UNIBUF(inset) || CHARSET_NEEDS_UNIBUF(outset)) {
+#ifdef SCHISM_MACOS
+		TextEncoding hfsenc, utf16enc, inenc, outenc;
+		OSStatus err;
+
+		/* stuff */
+		if (!charset_iconv_get_system_encoding_(&hfsenc)) {
+			free(x);
+			return NULL;
+		}
+
+		utf16enc = CreateTextEncoding(kTextEncodingUnicodeDefault, kTextEncodingDefaultVariant, kUnicode16BitFormat);
+
+		if (inset == CHARSET_SYSTEMSCRIPT) {
+			inenc = hfsenc;
+			outenc = utf16enc;
+		} else {
+			inenc = utf16enc;
+			outenc = hfsenc;
+		}
+
+		err = TECCreateConverter(&x->tec, inenc, outenc);
+		if (err != noErr) {
+			free(x);
+			return NULL;
+		}
+#elif defined(SCHISM_OS2)
+		ULONG cp;
+
+		if (!charset_os2_get_sys_cp(&cp) || !charset_os2_uconv_build(cp, &x->uc))
+			return NULL;
+#elif defined(SCHISM_WIN32)
+		x->cp = GetACP();
+#endif
+	}
+
+	if (CHARSET_NEEDS_UNIBUF(inset))
+		inset = CHARSET_UNIBUF;
+
+	if (CHARSET_NEEDS_UNIBUF(outset))
+		outset = CHARSET_UNIBUF;
+#endif
 
 	x->inconv = charset_iconv_lookup_conv_to_ucs4(inset);
 	x->outconv = charset_iconv_lookup_conv_from_ucs4(outset);
@@ -1751,36 +1291,275 @@ struct charset_iconv_v2 *charset_iconv_v2_open(charset_t inset, charset_t outset
 	return x;
 }
 
+#ifdef CHARSET_HAVE_UNIBUF
+int charset_to_unicode(struct charset_iconv_v2 *x, char **inbuf, size_t *insize)
+{
+	/* Convert to Unicode using our built in buffer */
+
+#if defined(SCHISM_OS2)
+	UniChar *u = x->uniconv;
+	size_t outlen = ARRAY_SIZE(x->uniconv), nonidentical;
+	int rc;
+
+	rc = UniUconvToUcs(&x->uc, (void **)inbuf, insize, &u, &outlen, &nonidentical);
+	if (rc < 0)
+		return -1;
+
+	/* whatever */
+	x->uniconvlen = u - x->uniconv;
+
+	return 0;
+#elif defined(SCHISM_MACOS)
+	OSStatus err;
+	ByteCount bytes_consumed; // I love consuming media!
+	ByteCount bytes_produced;
+
+	err = TECConvertText(x->tec, (ConstTextPtr)*inbuf, *insize, &bytes_consumed, (TextPtr)x->uniconv, sizeof(x->uniconv), &bytes_produced);
+	if (err != noErr && err != kTECOutputBufferFullStatus)
+		return -1;
+
+	*inbuf += bytes_consumed;
+	*insize -= bytes_consumed;
+
+	x->uniconvlen = bytes_produced >> 1;
+	return 0;
+#elif defined(SCHISM_WIN32)
+	/* FIXME it would probably be more worthwhile to try and find the closest
+	 * value to our thing by calling MultiByteToWideChar with a output buffer
+	 * of NULL and length 0 */
+
+	/* Make up for windows having a shit API by finding the largest value
+	 * that doesn't return an error. We do this through a really cursed
+	 * binary search setup, which I'm hoping will reduce times for
+	 * variable-width codepages. */
+	int r, process, to_add;
+
+	/* Start with Unicode buffer size or input size, whichever is smaller.
+	 * This effectively makes the common case (length of input will equal
+	 * or be close to output) the fastest as it will run first. */
+	process = MIN(sizeof(x->uniconv), *insize);
+	to_add = process / 2;
+
+	/* I'm gonna vomit */
+	for (;;) {
+		/* ^_^ */
+		process = CLAMP(process, 0, *insize);
+
+		r = MultiByteToWideChar(x->cp, 0, *inbuf, process, (LPWSTR)x->uniconv, ARRAY_SIZE(x->uniconv));
+
+		if (r == ARRAY_SIZE(x->uniconv)) {
+			/* Uhhhhhhhh ok */
+			break;
+		} else if (r > 0) {
+			/* Processed the whole buffer? */
+			if (process == *insize)
+				break;
+
+			/* Flip which way we're going and iterate less */
+			if (to_add < 0) {
+				to_add /= 2;
+				to_add = -to_add;
+			}
+
+			process += to_add;
+		} else if (GetLastError() == ERROR_INSUFFICIENT_BUFFER) {
+			/* Not enough space in output buffer to store converted string */
+
+			/* Flip which way we're going and iterate less */
+			if (to_add > 0) {
+				to_add /= 2;
+				to_add = -to_add;
+			}
+
+			process += to_add;
+		} else {
+			/* Probably invalid input buffer */
+			return -1;
+		}
+
+		if (to_add == 0) {
+			/* Uh oh; go to lower bound I guess */
+			to_add = -1;
+		}
+	}
+
+	if (r < 0)
+		return -1; /* ...?!?!?! (Perl mentioned?) */
+
+	*inbuf += process;
+	*insize -= process;
+	x->uniconvlen = r;
+	return 0; /* Ok */
+#elif defined(SCHISM_XBOX)
+	/* This could be better. Somehow it's still better than Windows */
+	NTSTATUS nt;
+	size_t i, len;
+	ULONG bytes;
+	char *in;
+
+	in = *inbuf;
+	len = *insize;
+
+	for (i = 0; i < len; i++) {
+		RtlMultiByteToUnicodeSize(&bytes, in, i);
+		if (bytes >= sizeof(x->uniconv))
+			break;
+	}
+
+	/* We can store `bytes / 2` unicode chars */
+	RtlMultiByteToUnicodeN(x->uniconv, bytes, NULL, in, i);
+
+	*inbuf += i;
+	*insize -= i;
+	return 0;
+#endif
+}
+
+static charset_error_t charset_decoder_unicode(struct charset_iconv_v2 *x, char **inbuf, size_t *inbufsz)
+{
+	/* Ughhh */
+	int r;
+	charset_decode_t *decoder;
+
+	decoder = &x->decoder;
+
+	if (!*inbufsz) {
+		decoder->in = NULL;
+		decoder->offset = 0;
+		decoder->size = 0;
+		return CHARSET_ERROR_SUCCESS; /* Nothing to do */
+	}
+
+	if (decoder->state != DECODER_STATE_OVERFLOWED)
+		return CHARSET_ERROR_SUCCESS; /* keep going */
+
+	/* ass */
+	r = charset_to_unicode(x, inbuf, inbufsz);
+	if (r < 0)
+		return CHARSET_ERROR_DECODE;
+
+	decoder->in = (const unsigned char *)x->uniconv;
+	decoder->offset = 0;
+	decoder->size = x->uniconvlen * 2;
+	decoder->state = DECODER_STATE_NEED_MORE;
+
+	return CHARSET_ERROR_SUCCESS;
+}
+
+/* AHHH! */
+static charset_error_t charset_from_unicode(struct charset_iconv_v2 *x)
+{
+	size_t s;
+
+	if (!CHARSET_NEEDS_UNIBUF(x->outset))
+		return CHARSET_ERROR_SUCCESS;
+
+	{
+#if defined(SCHISM_WIN32)
+		int r;
+
+		r = WideCharToMultiByte(x->cp, 0, x->uniconv, x->uniconvlen >> 1, (LPSTR)x->outbuf, sizeof(x->outbuf), NULL, NULL);
+		if (r > 0) {
+			/* success */
+		} else if (GetLastError() == ERROR_INSUFFICIENT_BUFFER) {
+			/* Should never happen */
+			return CHARSET_ERROR_NOMEM;
+		} else {
+			/* ?? */
+			return CHARSET_ERROR_ENCODE;
+		}
+
+		s = r;
+#elif defined(SCHISM_OS2)
+		int rc;
+		size_t nonidentical;
+		UniChar *uniptr = x->uniconv;
+		size_t unisize = x->uniconvlen >> 1;
+		char *outptr = (char *)x->outbuf;
+		size_t outsize = sizeof(x->outbuf);
+
+		/* TODO maybe should error on nonidentical ?? */
+		rc = UniUconvFromUcs(&x->uc, &uniptr, &unisize, (void **)&outptr, &outsize, &nonidentical);
+		if (rc != 0 || rc != ULS_BUFFERFULL)
+			return CHARSET_ERROR_ENCODE;
+
+		s = (outptr - (char *)x->uniconv);
+#elif defined(SCHISM_MACOS)
+		OSStatus err;
+		ByteCount bytes_consumed; // I love consuming media!
+		ByteCount bytes_produced;
+
+		err = TECConvertText(x->tec, (ConstTextPtr)x->uniconv, x->uniconvlen, &bytes_consumed, (TextPtr)x->outbuf, x->outbufsize, &bytes_produced);
+		if (err != noErr)
+			return CHARSET_ERROR_ENCODE;
+
+		s = bytes_produced;
+#elif defined(SCHISM_XBOX)
+		/* ;) */
+		ULONG ss;
+		RtlUnicodeToMultiByteN(x->outbuf, x->outbufsize, &ss, x->uniconv, x->uniconvlen);
+		s = ss;
+#endif
+	}
+
+	/* hopefully that went okay */
+	x->uniconvlen = 0;
+	x->outbufsize = s;
+
+	return CHARSET_ERROR_SUCCESS;
+}
+#endif
+
+static charset_error_t iconv_v2_write(struct charset_iconv_v2 *x, char **outbuf, size_t *outbufsz)
+{
+	if (x->outbufsize <= 0)
+		return CHARSET_ERROR_SUCCESS;
+
+	if (*outbufsz < x->outbufsize)
+		return CHARSET_ERROR_NOTENOUGHSPACE;
+
+	/* Write it into the output */
+	memcpy(*outbuf, x->outbuf, x->outbufsize);
+	*outbuf += x->outbufsize;
+	*outbufsz -= x->outbufsize;
+
+	x->outbufsize = 0;
+	return CHARSET_ERROR_SUCCESS;
+}
+
 charset_error_t charset_iconv_v2(struct charset_iconv_v2 *x, char **inbuf, size_t *inbufsz, char **outbuf, size_t *outbufsz)
 {
 	charset_decode_t *decoder;
 
-	if (x->outbufsize > 0) {
-		/* On a previous call, we had an encode that could not fit into the
-		 * output buffer. Try to do it now. */
+	/* Sanity check */
+	if (!inbuf || !*inbuf) return CHARSET_ERROR_NULLINPUT;
+	if (!outbuf || !*outbuf) return CHARSET_ERROR_NULLOUTPUT;
+	if (inbuf == outbuf || *inbuf == *outbuf) return CHARSET_ERROR_INPUTISOUTPUT;
 
-		if (*outbufsz < x->outbufsize)
-			return CHARSET_ERROR_NOTENOUGHSPACE;
-
-		/* Write it into the output */
-		memcpy(*outbuf, x->outbuf, x->outbufsize);
-		*outbuf += x->outbufsize;
-		*outbufsz -= x->outbufsize;
-
-		x->outbufsize = 0;
-	}
+	if (iconv_v2_write(x, outbuf, outbufsz) != CHARSET_ERROR_SUCCESS)
+		return CHARSET_ERROR_NOTENOUGHSPACE;
 
 	/* Set up decoder */
 	decoder = &x->decoder;
 
-	if (decoder->state < 0) {
+	if (decoder->state < 0 && decoder->state != DECODER_STATE_OVERFLOWED) {
 		/* If a previous call failed, don't try anything sneaky */
 		return CHARSET_ERROR_DECODE;
 	}
 
-	decoder->in = *inbuf;
-	decoder->offset = 0;
-	decoder->size = *inbufsz;
+#ifdef CHARSET_HAVE_UNIBUF
+	if (CHARSET_NEEDS_UNIBUF(x->inset)) {
+		/* This is terrible */
+		decoder->state = DECODER_STATE_OVERFLOWED;
+		if (charset_decoder_unicode(x, inbuf, inbufsz) < 0)
+			return CHARSET_ERROR_DECODE;
+	} else
+#endif
+	{
+		decoder->in = *inbuf;
+		decoder->offset = 0;
+		decoder->size = *inbufsz;
+	}
 
 	while (decoder->size > 0) {
 		int r;
@@ -1790,34 +1569,49 @@ charset_error_t charset_iconv_v2(struct charset_iconv_v2 *x, char **inbuf, size_
 
 		x->inconv(decoder);
 		if (decoder->state == DECODER_STATE_OVERFLOWED) {
+#ifdef CHARSET_HAVE_UNIBUF
+			/* hax: refill the unicode conversion buffer */
+			if (CHARSET_NEEDS_UNIBUF(x->inset)) {
+				if (charset_decoder_unicode(x, inbuf, inbufsz) < 0)
+					return CHARSET_ERROR_DECODE;
+				continue;
+			}
+#endif
 			/* Reached the end of the buffer */
-			decoder->state = DECODER_STATE_NEED_MORE;
 			break;
 		} else if (decoder->state < 0) {
 			/* Something has gone horribly wrong */
 			return CHARSET_ERROR_DECODE;
 		}
 
+#ifdef CHARSET_HAVE_UNIBUF
+		/* Reset unicode conversion length */
+		if (CHARSET_NEEDS_UNIBUF(x->outset))
+			x->uniconvlen = 0;
+#endif
+
 		/* now encode into our special buffer */
 		r = x->outconv(decoder->codepoint, x, ce_write_icon);
 		if (r < 0)
 			return CHARSET_ERROR_ENCODE;
 
-		/* Make sure we have enough space in the output buffer */
-		if (*outbufsz < x->outbufsize)
-			break; /* Can't decode any more */
+#ifdef CHARSET_HAVE_UNIBUF
+		if (charset_from_unicode(x) != CHARSET_ERROR_SUCCESS)
+			return CHARSET_ERROR_ENCODE;
+#endif
 
-		/* Otherwise we can write it directly into the output */
-		memcpy(*outbuf, x->outbuf, x->outbufsize);
-		*outbuf += x->outbufsize;
-		*outbufsz -= x->outbufsize;
-
-		x->outbufsize = 0;
+		if (iconv_v2_write(x, outbuf, outbufsz) != CHARSET_ERROR_SUCCESS)
+			break;
 	}
 
 	/* bring it all together now */
-	*inbuf += decoder->offset;
-	*inbufsz -= decoder->offset;
+#ifdef CHARSET_HAVE_UNIBUF
+	if (!CHARSET_NEEDS_UNIBUF(x->inset)) {
+		/* do it here */
+		*inbuf += decoder->offset;
+		*inbufsz -= decoder->offset;
+	}
+#endif
 
 	/* CHARSET_ERROR_NOTENOUGHSPACE means, there's not enough
 	 * space in the output buffer */
@@ -1830,5 +1624,100 @@ charset_error_t charset_iconv_v2(struct charset_iconv_v2 *x, char **inbuf, size_
 
 void charset_iconv_v2_close(struct charset_iconv_v2 *x)
 {
+#ifdef CHARSET_NEEDS_UNIBUF
+	if (CHARSET_NEEDS_UNIBUF(x->inset) || CHARSET_NEEDS_UNIBUF(x->outset)) {
+#ifdef SCHISM_MACOS
+		TECDisposeConverter(x->tec);
+#endif
+	}
+#endif
 	free(x);
+}
+
+/* ------------------------------------------------------------------------ */
+/* Compatibility shim over the old API */
+
+/* This is absolutely terrible */
+static size_t charset_nulterm_string_size(const void *in, charset_t set)
+{
+	charset_decode_t decoder;
+	charset_conv_to_ucs4_func to_ucs4;
+
+	/* otherwise use this */
+
+	to_ucs4 = charset_iconv_lookup_conv_to_ucs4(set);
+	if (!to_ucs4) {
+		return strlen(in); /* Might explode */
+	}
+
+	decoder.in = (const unsigned char *)in;
+	decoder.offset = 0;
+	decoder.size = SIZE_MAX;
+
+	decoder.state = DECODER_STATE_NEED_MORE;
+
+	for (;;) {
+		size_t off = decoder.offset;
+
+		to_ucs4(&decoder);
+		if (decoder.state < 0)
+			return 0; /* uh oh */
+
+		if (decoder.codepoint == 0)
+			return off;
+	}
+
+	return 0;
+}
+
+charset_error_t charset_iconv(const void *in, void *out, charset_t inset, charset_t outset, size_t insize)
+{
+	struct charset_iconv_v2 *v2;
+	/* Ouch */
+	char *inptr = (char *)in;
+	char buf[256];
+	disko_t fp;
+	charset_error_t rc;
+
+	v2 = charset_iconv_v2_open(inset, outset, 0);
+	if (!v2)
+		return CHARSET_ERROR_DECODE; /* not really */
+
+	if (insize == SIZE_MAX)
+		insize = charset_nulterm_string_size(in, inset);
+
+	if (disko_memopen_estimate(&fp, insize * charset_size_estimate_divisor[outset] / charset_size_estimate_divisor[inset]) < 0) {
+		charset_iconv_v2_close(v2);
+		return CHARSET_ERROR_NOMEM;
+	}
+
+	for (;;) {
+		char *outptr = buf;
+		size_t outsz = sizeof(buf);
+
+		rc = charset_iconv_v2(v2, &inptr, &insize, &outptr, &outsz);
+		if (rc < 0 && rc != CHARSET_ERROR_NOTENOUGHSPACE) {
+			charset_iconv_v2_close(v2);
+			disko_memclose(&fp, 0);
+			return rc;
+		}
+
+		/* Write what we have */
+		disko_write(&fp, buf, outptr - buf);
+
+		/* Finished conversion! */
+		if (rc == CHARSET_ERROR_SUCCESS)
+			break;
+	}
+
+	charset_iconv_v2_close(v2);
+
+	/* Force write NUL termination */
+	disko_write(&fp, "\0\0\0\0", 4);
+
+	disko_memclose(&fp, 1);
+
+	memcpy(out, &fp.data, sizeof(void *));
+
+	return CHARSET_ERROR_SUCCESS;
 }

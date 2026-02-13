@@ -554,3 +554,33 @@ int str_realloc(char **output, const char *input, size_t len)
 		return 0;
 	return 1;
 }
+
+/* --------------------------------------------------------------------- */
+
+char *mem_mem(const char *haystack, size_t haystacksz, const char *needle, size_t needlesz)
+{
+	char *x;
+
+	if (!haystacksz || !needlesz)
+		return NULL;
+
+	/* Easy */
+	if (needlesz == 1)
+		return memchr(haystack, *needle, haystacksz);
+
+	while (haystacksz > 0 && (x = memchr(haystack, *needle, haystacksz))) {
+		haystacksz -= (x - haystack);
+		haystack = x;
+
+		if (haystacksz < needlesz)
+			return NULL;
+
+		if (memcmp(x, needle, needlesz) == 0)
+			return x;
+
+		haystack++;
+		haystacksz--;
+	}
+
+	return NULL;
+}
