@@ -64,7 +64,7 @@ TEST_CHARSET_ICONV_V2_BEGIN(, CHARSET_UTF8, CHARSET_CP437, TEST_STRING, TEST_STR
 	charset_error_t r;
 
 	r = charset_iconv_v2(x, &inbufptr, &inbufsz, &outbufptr, &outbufsz);
-	ASSERT(r >= 0);
+	ASSERT_PRINTF(r >= 0, "%d", (int)r);
 }
 TEST_CHARSET_ICONV_V2_END
 

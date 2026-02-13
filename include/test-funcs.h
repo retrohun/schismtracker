@@ -46,6 +46,14 @@ TEST_FUNC(test_bavgs32)
 TEST_FUNC(test_bavgs64)
 TEST_FUNC(test_bitarray)
 
+TEST_FUNC(test_charset_iconv_v2)
+TEST_FUNC(test_charset_iconv_v2_partialbyte)
+TEST_FUNC(test_charset_iconv_v2_partialcode)
+#ifdef SCHISM_WIN32
+TEST_FUNC(test_charset_iconv_v2_ansi)
+TEST_FUNC(test_charset_iconv_v2_ansiout)
+#endif
+
 TEST_FUNC(test_sanity_time)
 
 TEST_FUNC(test_str_from_num_thousands_0)
@@ -217,13 +225,5 @@ TEST_FUNC(test_ver_to_date)
 TEST_FUNC(test_ver_parse_schism_version)
 TEST_FUNC(test_ver_parse_ctimestamp)
 TEST_FUNC(test_ver_parse_cdate)
-
-TEST_FUNC(test_charset_iconv_v2)
-TEST_FUNC(test_charset_iconv_v2_partialbyte)
-TEST_FUNC(test_charset_iconv_v2_partialcode)
-#ifdef SCHISM_WIN32
-TEST_FUNC(test_charset_iconv_v2_ansi)
-TEST_FUNC(test_charset_iconv_v2_ansiout)
-#endif
 
 #undef TEST_FUNC

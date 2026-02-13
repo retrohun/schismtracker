@@ -1222,7 +1222,7 @@ struct charset_iconv_v2 *charset_iconv_v2_open(charset_t inset, charset_t outset
 	if (inset == outset)
 		return NULL; /* Don't do this */
 
-	x = malloc(sizeof(*x));
+	x = calloc(1, sizeof(*x));
 	if (!x)
 		return NULL;
 
@@ -1606,17 +1606,20 @@ charset_error_t charset_iconv_v2(struct charset_iconv_v2 *x, char **inbuf, size_
 
 	/* bring it all together now */
 #ifdef CHARSET_HAVE_UNIBUF
-	if (!CHARSET_NEEDS_UNIBUF(x->inset)) {
-		/* do it here */
+	if (CHARSET_NEEDS_UNIBUF(x->inset)) {
+		/* nothing */
+	} else
+#endif
+	{
 		*inbuf += decoder->offset;
 		*inbufsz -= decoder->offset;
 	}
-#endif
 
 	/* CHARSET_ERROR_NOTENOUGHSPACE means, there's not enough
 	 * space in the output buffer */
-	if ((*inbufsz > 0) || (x->outbufsize > 0))
+	if ((*inbufsz > 0) || (x->outbufsize > 0)) {
 		return CHARSET_ERROR_NOTENOUGHSPACE;
+	}
 
 	/* "error success" okay. */
 	return CHARSET_ERROR_SUCCESS;
