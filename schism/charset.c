@@ -1243,7 +1243,7 @@ struct charset_iconv_v2 *charset_iconv_v2_open(charset_t inset, charset_t outset
 
 		utf16enc = CreateTextEncoding(kTextEncodingUnicodeDefault, kTextEncodingDefaultVariant, kUnicode16BitFormat);
 
-		if (inset == CHARSET_SYSTEMSCRIPT) {
+		if (CHARSET_NEEDS_UNIBUF(inset)) {
 			inenc = hfsenc;
 			outenc = utf16enc;
 		} else {
@@ -1497,7 +1497,7 @@ static charset_error_t charset_from_unicode(struct charset_iconv_v2 *x)
 		ByteCount bytes_consumed; // I love consuming media!
 		ByteCount bytes_produced;
 
-		err = TECConvertText(x->tec, (ConstTextPtr)x->uniconv, x->uniconvlen, &bytes_consumed, (TextPtr)x->outbuf, x->outbufsize, &bytes_produced);
+		err = TECConvertText(x->tec, (ConstTextPtr)x->uniconv, x->uniconvlen, &bytes_consumed, (TextPtr)x->outbuf, sizeof(x->outbuf), &bytes_produced);
 		if (err != noErr)
 			return CHARSET_ERROR_ENCODE;
 
@@ -1505,7 +1505,7 @@ static charset_error_t charset_from_unicode(struct charset_iconv_v2 *x)
 #elif defined(SCHISM_XBOX)
 		/* ;) */
 		ULONG ss;
-		RtlUnicodeToMultiByteN(x->outbuf, x->outbufsize, &ss, x->uniconv, x->uniconvlen);
+		RtlUnicodeToMultiByteN(x->outbuf, sizeof(x->outbuf), &ss, x->uniconv, x->uniconvlen);
 		s = ss;
 #endif
 	}
