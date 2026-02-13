@@ -1186,7 +1186,8 @@ struct charset_iconv_v2 {
 	TECObjectRef tec;
 #elif defined(SCHISM_OS2)
 	UconvObject uc;
-#elif defined(SCHISM_WIN32)
+#elif defined(SCHISM_WIN32) || defined(SCHISM_XBOX)
+	/* Unused on Xbox */
 	UINT cp;
 #endif
 };
@@ -1292,6 +1293,57 @@ struct charset_iconv_v2 *charset_iconv_v2_open(charset_t inset, charset_t outset
 }
 
 #ifdef CHARSET_HAVE_UNIBUF
+
+/* Win32 and XBOX have basically the same API (and basically the same
+ * limitations) so we just use a layer so they can share the same
+ * implementation. */
+#if defined(SCHISM_WIN32) || defined(SCHISM_XBOX)
+/* CodePage is only used on Windows */
+int MultiByteToUnicodeSize(UINT CodePage, PULONG BytesInUnicodeString, const CHAR *MultiByteString, ULONG BytesInMultiByteString)
+{
+#ifdef SCHISM_WIN32
+	int r;
+
+	if (BytesInMultiByteString > INT_MAX)
+		return -1;
+
+	r = MultiByteToWideChar(CodePage, MB_ERR_INVALID_CHARS, MultiByteString, BytesInMultiByteString, NULL, 0);
+	if (r <= 0)
+		return -1;
+
+	*BytesInUnicodeString = (ULONG)r << 1;
+	return 0;
+#else
+	return NT_SUCCESS(RtlMultiByteToUnicodeSize(BytesInUnicodeString, MultiByteString, BytesInMultiByteString)) ? 0 : -1;
+#endif
+}
+
+/* NOTE: This function has different behavior if there
+ * are not enough bytes available in the string on
+ * Windows and Xbox.
+ *
+ * This doesn't matter right now (because we don't use it)
+ * but it is important to keep in mind. */
+int MultiByteToUnicodeN(UINT CodePage, PWCH UnicodeString, ULONG MaxBytesInUnicodeString, PULONG BytesInUnicodeString, const CHAR *MultiByteString, ULONG BytesInMultiByteString)
+{
+#ifdef SCHISM_WIN32
+	int r;
+
+	if ((BytesInMultiByteString > INT_MAX) || (MaxBytesInUnicodeString > INT_MAX))
+		return -1;
+
+	r = MultiByteToWideChar(CodePage, MB_ERR_INVALID_CHARS, MultiByteString, BytesInMultiByteString, UnicodeString, MaxBytesInUnicodeString >> 1);
+	if (r <= 0)
+		return -1;
+
+	*BytesInUnicodeString = (ULONG)r << 1;
+	return 0;
+#else
+	return NT_SUCCESS(RtlMultiByteToUnicodeN(UnicodeString, MaxBytesInUnicodeString, BytesInUnicodeString, MultiByteString, BytesInMultiByteString)) ? 0 : -1;
+#endif
+}
+#endif
+
 int charset_to_unicode(struct charset_iconv_v2 *x, char **inbuf, size_t *insize)
 {
 	/* Convert to Unicode using our built in buffer */
@@ -1323,74 +1375,7 @@ int charset_to_unicode(struct charset_iconv_v2 *x, char **inbuf, size_t *insize)
 
 	x->uniconvlen = bytes_produced >> 1;
 	return 0;
-#elif defined(SCHISM_WIN32)
-	/* FIXME it would probably be more worthwhile to try and find the closest
-	 * value to our thing by calling MultiByteToWideChar with a output buffer
-	 * of NULL and length 0 (what XBOX does) */
-
-	/* Make up for windows having a shit API by finding the largest value
-	 * that doesn't return an error. We do this through a really cursed
-	 * binary search setup, which I'm hoping will reduce times for
-	 * variable-width codepages. */
-	int r, process, to_add;
-
-	/* Start with Unicode buffer size or input size, whichever is smaller.
-	 * This effectively makes the common case (length of input will equal
-	 * or be close to output) the fastest as it will run first. */
-	process = MIN(sizeof(x->uniconv), *insize);
-	to_add = process / 2;
-
-	/* I'm gonna vomit */
-	for (;;) {
-		/* ^_^ */
-		process = CLAMP(process, 0, *insize);
-
-		r = MultiByteToWideChar(x->cp, 0, *inbuf, process, (LPWSTR)x->uniconv, ARRAY_SIZE(x->uniconv));
-
-		if (r == ARRAY_SIZE(x->uniconv)) {
-			/* Uhhhhhhhh ok */
-			break;
-		} else if (r > 0) {
-			/* Processed the whole buffer? */
-			if (process == *insize)
-				break;
-
-			/* Flip which way we're going and iterate less */
-			if (to_add < 0) {
-				to_add /= 2;
-				to_add = -to_add;
-			}
-
-			process += to_add;
-		} else if (GetLastError() == ERROR_INSUFFICIENT_BUFFER) {
-			/* Not enough space in output buffer to store converted string */
-
-			/* Flip which way we're going and iterate less */
-			if (to_add > 0) {
-				to_add /= 2;
-				to_add = -to_add;
-			}
-
-			process += to_add;
-		} else {
-			/* Probably invalid input buffer */
-			return -1;
-		}
-
-		if (to_add == 0) {
-			/* Uh oh; go to lower bound I guess */
-			to_add = -1;
-		}
-	}
-
-	if (r < 0)
-		return -1; /* ...?!?!?! (Perl mentioned?) */
-
-	*inbuf += process;
-	*insize -= process;
-	x->uniconvlen = r;
-	return 0; /* Ok */
-#elif defined(SCHISM_XBOX)
+#elif defined(SCHISM_WIN32) || defined(SCHISM_XBOX)
 	ULONG bytes;
 	size_t i, len;
 	char *in;
@@ -1401,19 +1386,30 @@ int charset_to_unicode(struct charset_iconv_v2 *x, char **inbuf, size_t *insize)
 	if (!len)
 		return -1; /* What? */
 
-	/* Get the maximum amount of chars we can convert */
+	/* Common case: output characters == input bytes
+	 * This is the case for most European languages as well as simple katakana
+	 * for Japanese. */
+	i = MIN(len, ARRAY_SIZE(x->uniconv));
+	if ((MultiByteToUnicodeSize(x->cp, &bytes, in, i) == 0) && ((bytes >> 1) == i))
+		goto gotit;
+
+	/* Find the maximum amount of chars we can convert */
 	for (i = 1; i <= len; i++) {
-		RtlMultiByteToUnicodeSize(&bytes, in, i);
+		if (MultiByteToUnicodeSize(x->cp, &bytes, in, i) != 0)
+			continue; /* part of a character ?? */
 		if (bytes >= sizeof(x->uniconv))
 			break;
 	}
 
-	/* i - 1 was the last conversion to fit in our buffer */
-	if (!--i)
+	--i;
+
+gotit:
+	if (!i)
 		return -1; /* Can't even convert one character?? */
 
 	/* We can store `bytes / 2` unicode chars */
-	RtlMultiByteToUnicodeN(x->uniconv, sizeof(x->uniconv), &bytes, in, i);
+	if (MultiByteToUnicodeN(x->cp, x->uniconv, sizeof(x->uniconv), &bytes, in, i) != 0)
+		return -1;
 
 	x->uniconvlen = bytes >> 1;
 
