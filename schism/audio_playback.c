@@ -1803,6 +1803,9 @@ int audio_simple_init(schism_audio_device_t *dev_,
 	if (!dev->mutex)
 		return -1;
 
+	/* Start paused */
+	atm_store(&dev->paused, 1);
+
 	/* START! */
 	dev->thread = mt_thread_create(simple_thread_func_,
 		/* XXX include the name of the driver */

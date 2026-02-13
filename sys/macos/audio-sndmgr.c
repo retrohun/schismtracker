@@ -286,6 +286,7 @@ static schism_audio_device_t *sndmgr_audio_open_device(uint32_t id, const schism
 	dev->samples = desired->samples;
 	dev->size = desired->samples * desired->channels * (desired->bits / 8);
 	dev->silence = AUDIO_SPEC_SILENCE(*desired);
+	dev->paused = 1;
 
 	log_appendf(4, "[sndmgr] size: %" PRIu32 ", samples: %" PRIu32, dev->size, dev->samples);
 

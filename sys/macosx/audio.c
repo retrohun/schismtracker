@@ -363,6 +363,9 @@ static schism_audio_device_t *macosx_audio_open_device(uint32_t id, const schism
 {
 	schism_audio_device_t *dev = mem_calloc(1, sizeof(schism_audio_device_t));
 
+	/* Start paused */
+	dev->paused = 1;
+
 	dev->mutex = mt_mutex_create();
 	if (!dev->mutex) {
 		free(dev);
