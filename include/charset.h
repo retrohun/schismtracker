@@ -94,30 +94,6 @@ typedef enum {
 	CHARSET_ERROR_NOTENOUGHSPACE = -8,
 } charset_error_t;
 
-enum {
-	DECODER_STATE_INVALID_CHAR = -4, /* character unavailable in destination */
-	DECODER_STATE_ILL_FORMED = -3,   /* input buffer is ill-formed */
-	DECODER_STATE_OVERFLOWED = -2,   /* reached past input buffer size */
-	DECODER_STATE_ERROR = -1,        /* unknown generic decoding error */
-	DECODER_STATE_NEED_MORE = 0,     /* needs more bytes */
-	DECODER_STATE_DONE = 1,          /* decoding done! */
-};
-
-typedef struct {
-	/* -- input, set by the caller */
-	const unsigned char *in;  /* input buffer */
-	size_t size;              /* size of the buffer, can be SIZE_MAX if unknown */
-	size_t offset;            /* current decoding offset, should always be set to zero */
-
-	/* -- output, decoder initializes these */
-	uint32_t codepoint; /* decoded codepoint if successful, undefined if not */
-	int state;          /* one of DECODER_* definitions above; negative values are errors */
-
-	/* TODO: for specific backends, we will need a void * userdata field.
-	 * eventually we'll also need a charset_decode_end or something
-	 * to have proper deletion of the decoder */
-} charset_decode_t;
-
 SCHISM_CONST int char_digraph(int k1, int k2);
 SCHISM_CONST int char_unicode_to_cp866(uint32_t c);
 SCHISM_CONST int char_unicode_to_cp437(uint32_t c);
@@ -164,6 +140,55 @@ int charset_fnmatch(const void *match, charset_t match_set, const void *str, cha
 const char* charset_iconv_error_lookup(charset_error_t err);
 charset_error_t charset_iconv(const void* in, void* out, charset_t inset, charset_t outset, size_t insize);
 
+/* charset_iconv for newbies.
+ * This is preferred to using the below macro, because it is less prone to memory leaks.
+ * Do note that it assumes the input is NUL terminated. */
+SCHISM_ALWAYS_INLINE static inline
+void *charset_iconv_easy(const void *in, charset_t inset, charset_t outset) {
+	void *out;
+	if (!charset_iconv(in, &out, inset, outset, SIZE_MAX))
+		return out;
+	return NULL;
+}
+
+/* ------------------------------------------------------------------------ */
+
+/* v2 API. This is basically just the POSIX API.
+ * If in doubt, use this; the "v1" API above is basically just a compatibility
+ * layer over this. */
+struct charset_iconv_v2;
+
+struct charset_iconv_v2 *charset_iconv_v2_open(charset_t inset, charset_t outset, SCHISM_UNUSED uint32_t flags);
+charset_error_t charset_iconv_v2(struct charset_iconv_v2 *x, char **inbuf, size_t *inbufsz, char **outbuf, size_t *outbufsz);
+void charset_iconv_v2_close(struct charset_iconv_v2 *x);
+
+/* ------------------------------------------------------------------------ */
+
+enum {
+	DECODER_STATE_INVALID_CHAR = -4, /* character unavailable in destination */
+	DECODER_STATE_ILL_FORMED = -3,   /* input buffer is ill-formed */
+	DECODER_STATE_OVERFLOWED = -2,   /* reached past input buffer size */
+	DECODER_STATE_ERROR = -1,        /* unknown generic decoding error */
+	DECODER_STATE_NEED_MORE = 0,     /* needs more bytes */
+	DECODER_STATE_DONE = 1,          /* decoding done! */
+};
+
+typedef struct {
+	/* -- input, set by the caller */
+	const unsigned char *in;  /* input buffer */
+	size_t size;              /* size of the buffer, can be SIZE_MAX if unknown */
+	size_t offset;            /* current decoding offset, should always be set to zero */
+
+	/* -- output, decoder initializes these */
+	uint32_t codepoint; /* decoded codepoint if successful, undefined if not */
+	int state;          /* one of DECODER_* definitions above; negative values are errors */
+
+	/* -- only for charset_decode_next if we're using a
+	 *    charset that needs system-specific Unicode conversion */
+	struct charset_iconv_v2 *v2_;
+	charset_t v2set_;
+} charset_decode_t;
+
 /* character-by-character variant of charset_iconv; use as
  *     charset_decode_t decoder = {
  *         .in = buf,
@@ -180,24 +205,7 @@ charset_error_t charset_iconv(const void* in, void* out, charset_t inset, charse
 */
 charset_error_t charset_decode_next(charset_decode_t *decoder, charset_t inset);
 
-/* charset_iconv for newbies.
- * This is preferred to using the below macro, because it is less prone to memory leaks.
- * Do note that it assumes the input is NUL terminated. */
-SCHISM_ALWAYS_INLINE static inline
-void *charset_iconv_easy(const void *in, charset_t inset, charset_t outset) {
-	void *out;
-	if (!charset_iconv(in, &out, inset, outset, SIZE_MAX))
-		return out;
-	return NULL;
-}
-
-/* v2 API. This is basically just the POSIX API.
- * If in doubt, use this; the "v1" API above is basically just a compatibility
- * layer over this. */
-struct charset_iconv_v2;
-
-struct charset_iconv_v2 *charset_iconv_v2_open(charset_t inset, charset_t outset, SCHISM_UNUSED uint32_t flags);
-charset_error_t charset_iconv_v2(struct charset_iconv_v2 *x, char **inbuf, size_t *inbufsz, char **outbuf, size_t *outbufsz);
-void charset_iconv_v2_close(struct charset_iconv_v2 *x);
+/* Performs any necessary deconstruction */
+void charset_decode_end(charset_decode_t *decoder);
 
 #endif /* SCHISM_CHARSET_H_ */

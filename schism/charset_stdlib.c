@@ -39,14 +39,18 @@ size_t charset_strlen(const void* in, charset_t inset)
 	for (;;) {
 		charset_decode_next(&decoder, inset);
 
-		if (decoder.state < 0)
+		if (decoder.state < 0) {
+			charset_decode_end(&decoder);
 			return 0;
+		}
 
         if (decoder.state == DECODER_STATE_DONE)
             break;
         
         count++;
 	}
+
+	charset_decode_end(&decoder);
 
 	return count;
 }
@@ -76,6 +80,9 @@ size_t charset_strlen(const void* in, charset_t inset)
 		if (decoder1.state == DECODER_STATE_DONE || decoder2.state == DECODER_STATE_DONE || result) \
 			break; \
 	} \
+\
+	charset_decode_end(&decoder1); \
+	charset_decode_end(&decoder2); \
 \
 	return result;
 
@@ -118,7 +125,7 @@ struct strxcasecmp_impl_struct {
 		charset_decode_next(&decoder2, in2set); \
 \
 		if (decoder1.state < 0 || decoder2.state < 0) \
-			return result; \
+			break; \
 \
 		uint32_t cp1[2] = {0}; \
 		cp1[0] = decoder1.codepoint; \
@@ -128,12 +135,12 @@ struct strxcasecmp_impl_struct {
 \
 		uint32_t *cf1 = charset_case_fold_to_set(cp1, CHARSET_UCS4, CHARSET_UCS4); \
 		if (!cf1) \
-			return result; \
+			break; \
 \
 		uint32_t *cf2 = charset_case_fold_to_set(cp2, CHARSET_UCS4, CHARSET_UCS4); \
 		if (!cf2) { \
 			free(cf1); \
-			return result; \
+			break; \
 		} \
 \
 	    result.diff = charset_strcmp(cf1, CHARSET_UCS4, cf2, CHARSET_UCS4); \
@@ -144,6 +151,9 @@ struct strxcasecmp_impl_struct {
 	    if (decoder1.state == DECODER_STATE_DONE || decoder2.state == DECODER_STATE_DONE || result.diff) \
 	        break; \
 	} \
+\
+	charset_decode_end(&decoder1); \
+	charset_decode_end(&decoder2); \
 \
 	result.success = 1; \
 \
@@ -250,13 +260,17 @@ static inline SCHISM_ALWAYS_INLINE void *_charset_strxstr_impl(const void *in1, 
 	decoder.size = SIZE_MAX;
 
 	for (;;) {
-		if (!cmp(uc1 + decoder.offset, in1set, in2, in2set, len))
+		if (!cmp(uc1 + decoder.offset, in1set, in2, in2set, len)) {
+			charset_decode_end(&decoder);
 			return (void *)(uc1 + decoder.offset);
+		}
 
 		charset_decode_next(&decoder, in1set);
 		if (decoder.state < 0 || decoder.state == DECODER_STATE_DONE)
 			break;
 	}
+
+	charset_decode_end(&decoder);
 
 	return NULL;
 }
@@ -319,8 +333,11 @@ int32_t charset_strverscmp(const void *in1, charset_t in1set, const void *in2, c
 	int32_t state = S_N + ((decoder1.codepoint == UCS4_ZERO) + UCS4_IS_DIGIT(decoder1.codepoint));
 	int32_t diff;
 	while (!(diff = decoder1.codepoint - decoder2.codepoint)) {
-		if (!decoder1.codepoint)
+		if (!decoder1.codepoint) {
+			charset_decode_end(&decoder1);
+			charset_decode_end(&decoder2);
 			return diff;
+		}
 
 		state = next_state[state];
 		if (charset_decode_next(&decoder1, in1set) == CHARSET_ERROR_DECODE) goto charsetfail;
@@ -332,11 +349,16 @@ int32_t charset_strverscmp(const void *in1, charset_t in1set, const void *in2, c
 
 	switch (state) {
 	case CMP:
+		charset_decode_end(&decoder1);
+		charset_decode_end(&decoder2);
 		return diff;
 	case LEN:
 		while (UCS4_IS_DIGIT(decoder1.codepoint)) {
-			if (!UCS4_IS_DIGIT(decoder2.codepoint))
+			if (!UCS4_IS_DIGIT(decoder2.codepoint)) {
+				charset_decode_end(&decoder1);
+				charset_decode_end(&decoder2);
 				return 1;
+			}
 
 			if (charset_decode_next(&decoder1, in1set) == CHARSET_ERROR_DECODE) goto charsetfail;
 			if (charset_decode_next(&decoder2, in2set) == CHARSET_ERROR_DECODE) goto charsetfail;
@@ -344,10 +366,15 @@ int32_t charset_strverscmp(const void *in1, charset_t in1set, const void *in2, c
 
 		return UCS4_IS_DIGIT(decoder2.codepoint) ? -1 : diff;
 	default:
+		charset_decode_end(&decoder1);
+		charset_decode_end(&decoder2);
 		return state;
 	}
 
 charsetfail:
+	charset_decode_end(&decoder1);
+	charset_decode_end(&decoder2);
+
 #ifdef HAVE_STRVERSCMP
 	if (in1set == CHARSET_CHAR && in2set == CHARSET_CHAR)
 		return strverscmp(in1, in2);

@@ -1114,24 +1114,6 @@ static inline int charset_os2_uconv_build(ULONG cp, UconvObject *puconv)
 }
 #endif
 
-charset_error_t charset_decode_next(charset_decode_t *decoder, charset_t inset)
-{
-	if (inset >= ARRAY_SIZE(conv_to_ucs4_funcs))
-		return CHARSET_ERROR_UNIMPLEMENTED;
-
-	charset_conv_to_ucs4_func   conv_to_ucs4_func   = conv_to_ucs4_funcs[inset];
-
-	if (!conv_to_ucs4_func)
-		return CHARSET_ERROR_UNIMPLEMENTED;
-
-	conv_to_ucs4_func(decoder);
-
-	if (decoder->state < 0)
-		return CHARSET_ERROR_DECODE;
-
-	return CHARSET_ERROR_SUCCESS;
-}
-
 /* ----------------------------------------------------------------------- */
 /* version 2 API */
 
@@ -1299,7 +1281,7 @@ struct charset_iconv_v2 *charset_iconv_v2_open(charset_t inset, charset_t outset
  * implementation. */
 #if defined(SCHISM_WIN32) || defined(SCHISM_XBOX)
 /* CodePage is only used on Windows */
-int MultiByteToUnicodeSize(UINT CodePage, PULONG BytesInUnicodeString, const CHAR *MultiByteString, ULONG BytesInMultiByteString)
+int MultiByteToUnicodeSize(UINT CodePage, PULONG BytesInUnicodeString, LPCSTR MultiByteString, ULONG BytesInMultiByteString)
 {
 #ifdef SCHISM_WIN32
 	int r;
@@ -1324,7 +1306,7 @@ int MultiByteToUnicodeSize(UINT CodePage, PULONG BytesInUnicodeString, const CHA
  *
  * This doesn't matter right now (because we don't use it)
  * but it is important to keep in mind. */
-int MultiByteToUnicodeN(UINT CodePage, PWCH UnicodeString, ULONG MaxBytesInUnicodeString, PULONG BytesInUnicodeString, const CHAR *MultiByteString, ULONG BytesInMultiByteString)
+int MultiByteToUnicodeN(UINT CodePage, PWSTR UnicodeString, ULONG MaxBytesInUnicodeString, PULONG BytesInUnicodeString, LPCSTR MultiByteString, ULONG BytesInMultiByteString)
 {
 #ifdef SCHISM_WIN32
 	int r;
@@ -1677,6 +1659,11 @@ static size_t charset_nulterm_string_size(const void *in, charset_t set)
 	return 0;
 }
 
+static size_t charset_iconv_fixup_size(const void *in, charset_t inset, size_t x)
+{
+	return (x == SIZE_MAX) ? charset_nulterm_string_size(in, inset) : x;
+}
+
 charset_error_t charset_iconv(const void *in, void *out, charset_t inset, charset_t outset, size_t insize)
 {
 	struct charset_iconv_v2 *v2;
@@ -1690,8 +1677,7 @@ charset_error_t charset_iconv(const void *in, void *out, charset_t inset, charse
 	if (!v2)
 		return CHARSET_ERROR_DECODE; /* not really */
 
-	if (insize == SIZE_MAX)
-		insize = charset_nulterm_string_size(in, inset);
+	insize = charset_iconv_fixup_size(in, inset, insize);
 
 	if (disko_memopen_estimate(&fp, insize * charset_size_estimate_divisor[outset] / charset_size_estimate_divisor[inset]) < 0) {
 		charset_iconv_v2_close(v2);
@@ -1727,4 +1713,73 @@ charset_error_t charset_iconv(const void *in, void *out, charset_t inset, charse
 	memcpy(out, &fp.data, sizeof(void *));
 
 	return CHARSET_ERROR_SUCCESS;
+}
+
+/* ------------------------------------------------------------------------ */
+/* decoder API -- deprecated */
+
+charset_error_t charset_decode_next(charset_decode_t *decoder, charset_t inset)
+{
+	char *inptr, *outptr;
+	size_t insize, outsize;
+	charset_error_t rc;
+
+	if (decoder->offset >= decoder->size)
+		return CHARSET_ERROR_SUCCESS;
+
+	/* Try using a built-in decoder first */
+	{
+		charset_conv_to_ucs4_func conv_to_ucs4_func = charset_iconv_lookup_conv_to_ucs4(inset);
+		if (conv_to_ucs4_func) {
+			conv_to_ucs4_func(decoder);
+
+			if (decoder->state < 0)
+				return CHARSET_ERROR_DECODE;
+
+			return CHARSET_ERROR_SUCCESS;
+		}
+	}
+
+	SCHISM_RUNTIME_ASSERT(inset != CHARSET_UCS4, "inset cannot be the same as outset");
+
+	/* NOTE: This will break if someone changes the value of "inset" in between from
+	 * say, UCS-4, to UTF-8, and passed in (decoder->size = SIZE_MAX)
+	 *
+	 * (This is just one of the reasons this API really stinks) */
+	decoder->size = charset_iconv_fixup_size(decoder->in, inset, decoder->size);
+
+	/* Otherwise fallback to charset_iconv_v2_open */
+	if (!decoder->v2_ || (inset != decoder->v2set_)) {
+		if (decoder->v2_)
+			charset_iconv_v2_close(decoder->v2_);
+
+		decoder->v2_ = charset_iconv_v2_open(inset, CHARSET_UCS4, 0);
+		decoder->v2set_ = inset;
+	}
+
+	if (!decoder->v2_)
+		return CHARSET_ERROR_NOMEM; /* ?? */
+
+	inptr = (char *)decoder->in + decoder->offset;
+	insize = decoder->size - decoder->offset;
+	outptr = (char *)&decoder->codepoint;
+	outsize = sizeof(uint32_t);
+
+	rc = charset_iconv_v2(decoder->v2_, &inptr, &insize, &outptr, &outsize);
+
+	decoder->offset = inptr - (char *)decoder->in;
+
+	decoder->state = (rc != CHARSET_ERROR_SUCCESS && rc != CHARSET_ERROR_NOTENOUGHSPACE) ? DECODER_STATE_ERROR
+		: (decoder->size == SIZE_MAX && decoder->codepoint == 0) ? DECODER_STATE_DONE
+		: DECODER_STATE_NEED_MORE;
+
+	return rc;
+}
+
+void charset_decode_end(charset_decode_t *decoder)
+{
+	if (decoder->v2_) {
+		charset_iconv_v2_close(decoder->v2_);
+		decoder->v2_ = NULL;
+	}
 }
