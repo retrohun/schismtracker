@@ -30,7 +30,7 @@
 #include "init.h"
 
 struct schism_audio_device {
-	void (*callback)(uint8_t *stream, int len);
+	void (*callback)(uint8_t *stream, uint32_t len);
 };
 
 static int (SDLCALL *sdl12_InitSubSystem)(uint32_t flags);

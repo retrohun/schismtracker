@@ -80,7 +80,7 @@ typedef struct {
 	uint8_t channels; /* channels */
 	uint8_t fp; /* floating point boolean */
 	uint16_t samples; /* buffer size in samples */
-	void (*callback)(uint8_t *stream, int len);
+	void (*callback)(uint8_t *stream, uint32_t len);
 } schism_audio_spec_t;
 
 /* An opaque structure that each backend uses for its own data */

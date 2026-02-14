@@ -29,7 +29,7 @@
 
 struct schism_audio_device {
 	SDL_AudioDeviceID id;
-	void (*callback)(uint8_t *stream, int len);
+	void (*callback)(uint8_t *stream, uint32_t len);
 };
 
 #ifndef SDL_AUDIO_ALLOW_SAMPLES_CHANGE /* added in SDL 2.0.9 */

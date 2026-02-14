@@ -67,7 +67,7 @@ typedef AudioUnit AudioComponentInstance;
 
 struct schism_audio_device {
 	/* The callback and the protecting mutex */
-	void (*callback)(uint8_t *stream, int len);
+	void (*callback)(uint8_t *stream, uint32_t len);
 	mt_mutex_t *mutex;
 
 	int paused;

@@ -86,7 +86,7 @@ struct schism_audio_device {
 	IAsio *asio;
 
 	/* callback; fills the audio buffer */
-	void (*callback)(uint8_t *stream, int len);
+	void (*callback)(uint8_t *stream, uint32_t len);
 	mt_mutex_t *mutex;
 
 	/* the ASIO buffers

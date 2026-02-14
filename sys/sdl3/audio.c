@@ -36,7 +36,7 @@ struct schism_audio_device {
 	// We have to do this ourselves now
 	mt_mutex_t *mutex;
 
-	void (*callback)(uint8_t *stream, int len);
+	void (*callback)(uint8_t *stream, uint32_t len);
 
 	/* heap-allocated buffer, grows if SDL requests more
 	 * space than we have space allocated */

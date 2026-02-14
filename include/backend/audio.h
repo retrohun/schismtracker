@@ -126,12 +126,12 @@ struct schism_audio_device_simple {
 
 	struct atm paused;
 
-	void (*callback)(uint8_t *stream, int len);
+	void (*callback)(uint8_t *stream, uint32_t len);
 };
 
 int audio_simple_init(schism_audio_device_t *dev_,
 	const struct schism_audio_device_simple_vtable *vtbl,
-	void (*callback)(uint8_t *stream, int len));
+	void (*callback)(uint8_t *stream, uint32_t len));
 void audio_simple_close(struct schism_audio_device_simple *dev);
 
 /* --- default lock implementation. */

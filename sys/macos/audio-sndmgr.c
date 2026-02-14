@@ -54,7 +54,7 @@ struct schism_audio_device {
 
 	mt_mutex_t *mutex;
 
-	void (*callback)(uint8_t *stream, int len);
+	void (*callback)(uint8_t *stream, uint32_t len);
 
 	int paused;
 

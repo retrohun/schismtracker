@@ -206,7 +206,7 @@ static void audio_reallocate_buffer(uint32_t samples)
 }
 
 // this gets called from the backend
-static void audio_callback(uint8_t *stream, int len)
+static void audio_callback(uint8_t *stream, uint32_t len)
 {
 	uint32_t wasrow = current_song->row;
 	uint32_t waspat = current_song->current_order;
@@ -1788,7 +1788,7 @@ static int simple_thread_func_(void *userdata)
 
 int audio_simple_init(schism_audio_device_t *dev_,
 	const struct schism_audio_device_simple_vtable *vtbl,
-	void (*callback)(uint8_t *stream, int len))
+	void (*callback)(uint8_t *stream, uint32_t len))
 {
 	struct schism_audio_device_simple *dev = (void *)dev_;
 
