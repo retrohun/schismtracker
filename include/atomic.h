@@ -30,8 +30,19 @@ struct atm {
 	volatile int32_t x;
 };
 
+struct atm64 {
+	volatile int64_t x;
+};
+
 struct atm_ptr {
+#if SIZEOF_VOID_P == 8
+	struct atm64 x;
+#elif SIZEOF_VOID_P == 4
+	struct atm x;
+#else
+	/* ??? */
 	void *volatile x;
+#endif
 };
 
 /* init/quit functions are ONLY for mutexes */
@@ -40,6 +51,9 @@ void atm_quit(void);
 
 int32_t atm_load(struct atm *atm);
 void atm_store(struct atm *atm, int32_t x);
+
+int64_t atm64_load(struct atm64 *atm);
+void atm64_store(struct atm64 *atm, int64_t x);
 
 void *atm_ptr_load(struct atm_ptr *atm);
 void atm_ptr_store(struct atm_ptr *atm, void *x);

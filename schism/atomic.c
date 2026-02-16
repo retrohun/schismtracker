@@ -36,132 +36,116 @@
  * a volatile union of pointer and int[32/64]_t. Then we can implement
  * everything else simply as calls to that function. :) */
 
-#ifdef SCHISM_WIIU
+#if defined(SCHISM_WIIU)
 /* There is a critical bug in the WiiU processor, where atomics
  * do not work correctly. This is fixed on the OS side. */
+# include <coreinit/atomic.h>
+# include <coreinit/atomic64.h>
+# define COREATM(NAME, TYPE) \
+	TYPE atm##NAME##_load(struct atm##NAME *atm) \
+	{ \
+		return OSOrAtomic##NAME(&atm->x, 0); \
+	} \
+	\
+	void atm##NAME##_store(struct atm##NAME *atm, TYPE x) \
+	{ \
+		OSSwapAtomic##NAME(&atm->x, x); \
+	}
+# ifndef ATM_DEFINED
+COREATM(/* none */, int32_t)
+#  define ATM_DEFINED
+# endif
+# ifndef ATM64_DEFINED
+COREATM(64, int64_t)
+#  define ATM64_DEFINED
+# endif
+# undef COREATM
+#endif
 
-#include <coreinit/atomic.h>
+/* Retro68 has the functions declared, but they are not actually exported
+ * anywhere, which causes a link error. */
+#if (__STDC_VERSION__ >= 201112L) && !defined(__STDC_NO_ATOMICS__) && !defined(SCHISM_MACOS)
+# include <stdatomic.h>
+# define C11ATM(NAME, TYPE) \
+	TYPE atm##NAME##_load(struct atm##NAME *atm) \
+	{ \
+		return atomic_load((const _Atomic volatile TYPE *)&atm->x); \
+	} \
+	\
+	void atm##NAME##_store(struct atm##NAME *atm, TYPE x) \
+	{ \
+		atomic_store((_Atomic volatile TYPE *)&atm->x, x); \
+	}
+# ifndef ATM_DEFINED
+C11ATM(/* none */, int32_t)
+#  define ATM_DEFINED
+# endif
+# ifndef ATM64_DEFINED
+C11ATM(64, int64_t)
+#  define ATM64_DEFINED
+# endif
+# undef C11ATM
+#endif
 
-int atm_init(void) { return 0; }
-void atm_quit(void) { }
+#if SCHISM_GNUC_HAS_BUILTIN(__atomic_load, 4, 7, 0) && !defined(SCHISM_MACOS)
+# define GNUCATM(NAME, TYPE) \
+	TYPE atm##NAME##_load(struct atm##NAME *atm) \
+	{ \
+		TYPE r; \
+		__atomic_load(&atm->x, &r, __ATOMIC_SEQ_CST); \
+		return r; \
+	} \
+	\
+	void atm##NAME##_store(struct atm##NAME *atm, TYPE x) \
+	{ \
+		__atomic_store(&atm->x, &x, __ATOMIC_SEQ_CST); \
+	}
+# ifndef ATM_DEFINED
+GNUCATM(/* none */, int32_t)
+#  define ATM_DEFINED
+# endif
+# ifndef ATM64_DEFINED
+GNUCATM(64, int64_t)
+#  define ATM64_DEFINED
+# endif
+# undef GNUCATM
+#endif
 
-int32_t atm_load(struct atm *atm)
-{
-	return OSOrAtomic(&atm->x, 0);
-}
-
-void atm_store(struct atm *atm, int32_t x)
-{
-	OSSwapAtomic(&atm->x, x);
-}
-
-/* wii u is 32-bit */
-void *atm_ptr_load(struct atm_ptr *atm)
-{
-	return (void *)atm_load((struct atm *)atm);
-}
-
-void atm_ptr_store(struct atm_ptr *atm, void *x)
-{
-	return atm_store((struct atm *)atm, (int32_t)x);
-}
-
-#elif (__STDC_VERSION__ >= 201112L) && !defined(__STDC_NO_ATOMICS__)
-
-#include <stdatomic.h>
-
-int atm_init(void) { return 0; }
-void atm_quit(void) { }
-
-int32_t atm_load(struct atm *atm)
-{
-	return atomic_load((const _Atomic volatile int32_t *)&atm->x);
-}
-
-void atm_store(struct atm *atm, int32_t x)
-{
-	atomic_store((_Atomic volatile int32_t *)&atm->x, x);
-}
-
-void *atm_ptr_load(struct atm_ptr *atm)
-{
-	return atomic_load((void *const volatile _Atomic*)&atm->x);
-}
-
-void atm_ptr_store(struct atm_ptr *atm, void *x)
-{
-	atomic_store((void *volatile _Atomic *)&atm->x, x);
-}
-
-#elif SCHISM_GNUC_HAS_BUILTIN(__atomic_load, 4, 7, 0)
-
-int atm_init(void) { return 0; }
-void atm_quit(void) { }
-
-int32_t atm_load(struct atm *atm)
-{
-	int32_t r;
-	__atomic_load(&atm->x, &r, __ATOMIC_SEQ_CST);
-	return r;
-}
-
-void atm_store(struct atm *atm, int32_t x)
-{
-	__atomic_store(&atm->x, &x, __ATOMIC_SEQ_CST);
-}
-
-void *atm_ptr_load(struct atm_ptr *atm)
-{
-	void *r;
-	__atomic_load(&atm->x, &r, __ATOMIC_SEQ_CST);
-	return r;
-}
-
-void atm_ptr_store(struct atm_ptr *atm, void *x)
-{
-	__atomic_store(&atm->x, &x, __ATOMIC_SEQ_CST);
-}
-
-#elif SCHISM_GNUC_HAS_BUILTIN(__sync_synchronize, 4, 1, 0)
+#if SCHISM_GNUC_HAS_BUILTIN(__sync_synchronize, 4, 1, 0)
 /* I hope this is right */
 
-int atm_init(void) { return 0; }
-void atm_quit(void) { }
+#define GNUCATM(NAME, TYPE) \
+	TYPE atm##NAME##_load(struct atm##NAME *atm) \
+	{ \
+		__sync_synchronize(); \
+		return atm->x; \
+	} \
+	\
+	void atm##NAME##_store(struct atm##NAME *atm, TYPE x) \
+	{ \
+		atm->x = x; \
+		__sync_synchronize(); \
+	}
 
-int32_t atm_load(struct atm *atm)
-{
-	__sync_synchronize();
-	return atm->x;
-}
+# ifndef ATM_DEFINED
+GNUCATM(/* none */, int32_t)
+#  define ATM_DEFINED
+# endif
+# ifndef ATM64_DEFINED
+GNUCATM(64, int64_t)
+#  define ATM64_DEFINED
+# endif
+# undef GNUCATM
+#endif
 
-void atm_store(struct atm *atm, int32_t x)
-{
-	atm->x = x;
-	__sync_synchronize();
-}
-
-void *atm_ptr_load(struct atm_ptr *atm)
-{
-	__sync_synchronize();
-	return atm->x;
-}
-
-void atm_ptr_store(struct atm_ptr *atm, void *x)
-{
-	atm->x = x;
-	__sync_synchronize();
-}
-
-#elif defined(SCHISM_WIN32)
+#if defined(SCHISM_WIN32)
 /* Interlocked* */
-
-#include <windows.h>
+# include <windows.h>
 
 SCHISM_STATIC_ASSERT(sizeof(LONG) == sizeof(int32_t), "LONG must be 32-bit");
+SCHISM_STATIC_ASSERT(sizeof(LONG64) == sizeof(int64_t), "LONGLONG must be 64-bit");
 
-int atm_init(void) { return 0; }
-void atm_quit(void) { }
-
+#if !defined(ATM_DEFINED)
 int32_t atm_load(struct atm *atm)
 {
 	return InterlockedOr((volatile LONG *)&atm->x, 0);
@@ -171,30 +155,25 @@ void atm_store(struct atm *atm, int32_t x)
 {
 	InterlockedExchange((volatile LONG *)&atm->x, x);
 }
-
-void *atm_ptr_load(struct atm_ptr *atm)
-{
-#if SIZEOF_VOID_P == 8
-	return (void *)InterlockedOr64((volatile LONG64 *)&atm->x, 0);
-#elif SIZEOF_VOID_P == 4
-	return (void *)InterlockedOr((volatile LONG *)&atm->x, 0);
-#else
-# error what?
+# define ATM_DEFINED
 #endif
+
+#if !defined(ATM64_DEFINED)
+int64_t atm64_load(struct atm64 *atm)
+{
+	return InterlockedOr64((volatile LONG64 *)&atm->x, 0);
 }
 
-void atm_ptr_store(struct atm_ptr *atm, void *x)
+void atm64_store(struct atm64 *atm, int64_t x)
 {
-#if SIZEOF_VOID_P == 8
-	InterlockedExchange64((volatile LONG64 *)&atm->x, (LONG64)x);
-#elif SIZEOF_VOID_P == 4
-	InterlockedExchange((volatile LONG *)&atm->x, (LONG)x);
-#else
-# error what?
-#endif
+	InterlockedExchange64((volatile LONG64 *)&atm->x, x);
 }
+# define ATM64_DEFINED
+#endif
 
-#elif defined(__WATCOMC__) && defined(__386__)
+#endif
+
+#if defined(__WATCOMC__) && defined(__386__)
 SCHISM_STATIC_ASSERT(sizeof(void *) == sizeof(int32_t),
 	"atomic code assumes that pointer is 32-bit");
 
@@ -212,9 +191,7 @@ static int32_t _watcom_xadd(volatile int32_t *a, int32_t v);
 	value [eax] \
 	modify exact [eax];
 
-int atm_init(void) { return 0; }
-void atm_quit(void) { }
-
+#ifndef ATM_DEFINED
 int32_t atm_load(struct atm *atm)
 {
 	return _watcom_xadd(&atm->x, 0);
@@ -224,24 +201,14 @@ void atm_store(struct atm *atm, int32_t x)
 {
 	_watcom_xchg(&atm->x, x);
 }
+# define ATM_DEFINED
+#endif
 
-void *atm_ptr_load(struct atm_ptr *atm)
-{
-	return (void *)_watcom_xadd((volatile int32_t *)&atm->x, 0);
-}
+#endif
 
-void atm_ptr_store(struct atm_ptr *atm, void *x)
-{
-	_watcom_xchg((volatile int32_t *)&atm->x, (int32_t)x);
-}
+#if !defined(USE_THREADS)
 
-#elif !defined(USE_THREADS)
-
-/* eh */
-
-int atm_init(void) { return 0; }
-void atm_quit(void) { }
-
+#ifndef ATM_DEFINED
 int32_t atm_load(struct atm *atm)
 {
 	return atm->x;
@@ -251,18 +218,24 @@ void atm_store(struct atm *atm, int32_t x)
 {
 	atm->x = x;
 }
+#define ATM_DEFINED
+#endif
 
-void *atm_ptr_load(struct atm_ptr *atm)
+#ifndef ATM64_DEFINED
+int64_t atm64_load(struct atm64 *atm)
 {
 	return atm->x;
 }
 
-void atm_ptr_store(struct atm_ptr *atm, void *x)
+void atm64_store(struct atm64 *atm, int64_t x)
 {
 	atm->x = x;
 }
+#define ATM64_DEFINED
+#endif
 
-#else
+#endif
+
 /* TODO: SDL has atomics, probably with more platforms than
  * we support now. We should be able to import it. */
 
@@ -270,17 +243,27 @@ void atm_ptr_store(struct atm_ptr *atm, void *x)
 
 #define MUTEXES_SIZE (16)
 
+#if !defined(ATM_DEFINED) || !defined(ATM64_DEFINED) || ((SIZEOF_VOID_P != 4) && (SIZEOF_VOID_P != 8))
+# define ATM_NEED_MUTEXES 1
+#endif
+
+#ifdef ATM_NEED_MUTEXES
 static mt_mutex_t *mutexes[MUTEXES_SIZE] = {0};
+#endif
 
 int atm_init(void)
 {
-	uint32_t i;
+#ifdef ATM_NEED_MUTEXES
+	{
+		uint32_t i;
 
-	for (i = 0; i < MUTEXES_SIZE; i++) {
-		mutexes[i] = mt_mutex_create();
-		if (!mutexes[i])
-			return -1;
+		for (i = 0; i < MUTEXES_SIZE; i++) {
+			mutexes[i] = mt_mutex_create();
+			if (!mutexes[i])
+				return -1;
+		}
 	}
+#endif
 
 	/* at this point, the mutexes array should NEVER be touched again
 	 * until we quit. */
@@ -290,6 +273,7 @@ int atm_init(void)
 
 void atm_quit(void)
 {
+#ifdef ATM_NEED_MUTEXES
 	uint32_t i;
 
 	for (i = 0; i < MUTEXES_SIZE; i++) {
@@ -298,64 +282,68 @@ void atm_quit(void)
 			mutexes[i] = NULL;
 		}
 	}
+#endif
 }
 
 /* ------------------------------------------------------------------------ */
 
+#ifdef ATM_NEED_MUTEXES
 static inline SCHISM_ALWAYS_INLINE
-mt_mutex_t *atm_get_mutex(struct atm *atm)
+mt_mutex_t *atm_get_mutex_impl(void *x, size_t align)
 {
-	/* TODO use alignof() here ... */
-	return mutexes[((uintptr_t)atm / SCHISM_ALIGNOF(struct atm)) % MUTEXES_SIZE];
+	return mutexes[((uintptr_t)x / align) % MUTEXES_SIZE];
 }
 
-int atm_load(struct atm *atm)
-{
-	int r;
-	mt_mutex_t *m = atm_get_mutex(atm);
+#define atm_get_mutex(type, x) atm_get_mutex_impl(x, SCHISM_ALIGNOF(type))
 
-	mt_mutex_lock(m);
-	r = atm->x;
-	mt_mutex_unlock(m);
+#define ATM_IMPL(NAME, TYPE) \
+	TYPE atm##NAME##_load(struct atm##NAME *atm) \
+	{ \
+		TYPE r; \
+		mt_mutex_t *m = atm_get_mutex(struct atm##NAME, atm); \
+	\
+		mt_mutex_lock(m); \
+		r = atm->x; \
+		mt_mutex_unlock(m); \
+	\
+		return r; \
+	} \
+	\
+	void atm##NAME##_store(struct atm##NAME *atm, TYPE x) \
+	{ \
+		mt_mutex_t *m = atm_get_mutex(struct atm##NAME, atm); \
+	\
+		mt_mutex_lock(m); \
+		atm->x = x; \
+		mt_mutex_unlock(m); \
+	}
 
-	return r;
-}
+#endif
 
-void atm_store(struct atm *atm, int32_t x)
-{
-	mt_mutex_t *m = atm_get_mutex(atm);
+#if !defined(ATM_DEFINED)
+ATM_IMPL(/* none */, int32_t)
+#endif
+#if !defined(ATM64_DEFINED)
+ATM_IMPL(64, int64_t)
+#endif
 
-	mt_mutex_lock(m);
-	atm->x = x;
-	mt_mutex_unlock(m);
-}
+/* pointer ---- */
 
-static inline SCHISM_ALWAYS_INLINE
-mt_mutex_t *atm_ptr_get_mutex(struct atm_ptr *atm)
-{
-	/* TODO use alignof() here ... */
-	return mutexes[((uintptr_t)atm / SCHISM_ALIGNOF(struct atm_ptr)) % MUTEXES_SIZE];
-}
+#define ATM_PTR_IMPL(NAME, TYPE) \
+	void *atm_ptr_load(struct atm_ptr *atm) \
+	{ \
+		return (void *)atm##NAME##_load(&atm->x); \
+	} \
+	\
+	void atm_ptr_store(struct atm_ptr *atm, void *x) \
+	{ \
+		atm##NAME##_store(&atm->x, (TYPE)x); \
+	}
 
-void *atm_ptr_load(struct atm_ptr *atm)
-{
-	void *r;
-	mt_mutex_t *m = atm_ptr_get_mutex(atm);
-
-	mt_mutex_lock(m);
-	r = atm->x;
-	mt_mutex_unlock(m);
-
-	return r;
-}
-
-void atm_ptr_store(struct atm_ptr *atm, void *x)
-{
-	mt_mutex_t *m = atm_ptr_get_mutex(atm);
-
-	mt_mutex_lock(m);
-	atm->x = x;
-	mt_mutex_unlock(m);
-}
-
+#if SIZEOF_VOID_P == 8
+ATM_PTR_IMPL(64, int64_t)
+#elif SIZEOF_VOID_P == 4
+ATM_PTR_IMPL(/* none */, int32_t)
+#else
+ATM_IMPL(_ptr, void *)
 #endif
