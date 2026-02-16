@@ -38,11 +38,14 @@ jobs:
       LIBOGG_SHA256: 5c8253428e181840cd20d41f3ca16557a9cc04bad4a3d04cce84808677fa1061
       UTF8PROC_VERSION: 2.10.0
       UTF8PROC_SHA256: 276a37dc4d1dd24d7896826a579f4439d1e5fe33603add786bb083cab802e23e
+      SDL12_VERSION: 1.2.15
+      SDL12_SHA256: 11fe2c54b13897ab3857218e56a445443ee1ce11a7d5482e5f9ef264d61bbbf1
 
     steps:
       - name: 'Install dependencies'
         run: |
-          brew install autoconf automake libtool zip
+          # 7zip can extract DMG files without having to mount them
+          brew install autoconf automake libtool zip sevenzip
 
       - name: 'Cache x86_64 dependencies'
         id: cache-x86_64-dependencies
@@ -77,7 +80,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: '/Users/runner/ppcprefix'
-          key: mac-powerpc-dependencies-SDL_1.2.13-1-FLAC_${{ env.FLAC_VERSION }}-LIBOGG_${{ env.LIBOGG_VERSION }}-UTF8PROC_${{ env.UTF8PROC_VERSION }}
+          key: mac-powerpc-dependencies-SDL_${{ env.SDL12_VERSION }}-1-FLAC_${{ env.FLAC_VERSION }}-LIBOGG_${{ env.LIBOGG_VERSION }}-UTF8PROC_${{ env.UTF8PROC_VERSION }}
 
       - name: 'Cache powerpc files'
         id: cache-powerpc-files
@@ -138,17 +141,12 @@ jobs:
         id: date
         run: echo "date=$(git log -n 1 --date=short --format=format:%cd | sed 's/\(....\)-\(..\)-\(..\).*/\1\2\3/')" >> $GITHUB_OUTPUT
 
-        # This binary package was prepared from the official release.
-        # I've used SDL 1.2.13 here because it's the latest version to
-        # actually build on Panther, and I don't see any reason to
-        # upgrade (except security, but if you care about security why
-        # are you using PowerPC?)
       - name: 'Download SDL 1.2 binary (powerpc)'
         if: steps.cache-powerpc-dependencies.outputs.cache-hit != 'true'
         run: |
-          wget -O "SDL-1.2.13-ppc.zip" "https://www.dropbox.com/scl/fi/8jlk6embrr09torpvhed2/SDL-1.2.13-ppc.zip?rlkey=eu4k41oewdfz6n2ygh97k8pzd&st=0y8oam0d&dl=1"
-          echo "1ef3182d97dded091955683db51edf02f56f93d69d0914622d612de66b0c7eb2  SDL-1.2.13-ppc.zip" | shasum -a 256 -c -
-          unzip "SDL-1.2.13-ppc.zip"
+          wget -O "SDL-$SDL12_VERSION.dmg" "https://www.libsdl.org/release/SDL-$SDL12_VERSION-OSX10.4.dmg"
+          echo "$SDL12_SHA256  SDL-$SDL12_VERSION.dmg" | shasum -a 256 -c -
+          7z x "SDL-$SDL12_VERSION.dmg" -o"SDL-$SDL12_VERSION"
 
       - name: 'Download SDL2 sources (x86_64/arm64)'
         if: steps.cache-x86_64-dependencies.outputs.cache-hit != 'true' || steps.cache-arm64-dependencies.outputs.cache-hit != 'true'
@@ -161,16 +159,15 @@ jobs:
         if: steps.cache-powerpc-dependencies.outputs.cache-hit != 'true'
         run: |
           export PATH="$PATH:$HOME/ppc/usr/bin"
-          pushd SDL-1.2.13-ppc
-          # copy headers
-          mkdir -p "$HOME/ppcprefix/include/SDL"
-          cp -r headers/* "$HOME/ppcprefix/include/SDL"
-          # copy the library
+
+          mkdir -p "$HOME/ppcprefix/include"
           mkdir -p "$HOME/ppcprefix/lib"
-          cp "libSDL-1.2.0.dylib" "$HOME/ppcprefix/lib"
+
+          mv "SDL-$SDL12_VERSION/SDL/SDL.framework/Versions/A/Headers" "$HOME/ppcprefix/include/SDL"
+          mv "SDL-$SDL12_VERSION/SDL/SDL.framework/Versions/A/SDL" "$HOME/ppcprefix/lib/libSDL-1.2.0.dylib"
           ln -sf "libSDL-1.2.0.dylib" "$HOME/ppcprefix/lib/libSDL.dylib"
 
-          popd
+          rm -rf "SDL-$SDL12_VERSION"
 
       - name: 'Build SDL2 (x86_64)'
         env:
@@ -360,8 +357,8 @@ jobs:
             install_name_tool -change "$HOME/arm64prefix/lib/lib${i}.dylib" @executable_path/../Resources/lib${i}.dylib build_arm64/schismtracker
           done
 
-          "$HOME/ppc/usr/bin/install_name_tool" -change "@executable_path/../Frameworks/SDL.framework/Versions/A/SDL" "@executable_path/../Resources/libSDL-1.2.0.dylib" build_powerpc/schismtracker
-          "$HOME/ppc/usr/bin/install_name_tool" -change "@executable_path/../Frameworks/SDL.framework/Versions/A/SDL" "@executable_path/../Resources/libSDL-1.2.0.dylib" build_ppc7400/schismtracker
+          "$HOME/ppc/usr/bin/install_name_tool" -change "@rpath/SDL.framework/Versions/A/SDL" "@executable_path/../Resources/libSDL-1.2.0.dylib" build_powerpc/schismtracker
+          "$HOME/ppc/usr/bin/install_name_tool" -change "@rpath/SDL.framework/Versions/A/SDL" "@executable_path/../Resources/libSDL-1.2.0.dylib" build_ppc7400/schismtracker
           install_name_tool -change "$HOME/x86_64prefix/lib/libSDL2-2.0.0.dylib" @executable_path/../Resources/libSDL2-2.0.0.dylib build_x86_64/schismtracker
           install_name_tool -change "$HOME/arm64prefix/lib/libSDL2-2.0.0.dylib" @executable_path/../Resources/libSDL2-2.0.0.dylib build_arm64/schismtracker
 
