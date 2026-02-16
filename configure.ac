@@ -1040,14 +1040,14 @@ dnl --------------------------------------------------------------------------
 dnl check for a target. TARGET is what to pass to the compiler, and NAME is
 dnl what to append to SCHISM_ to #define
 
-# SCHISM_CHECK_TARGET(TARGET, NAME, ADDCFLAGS)
-# --------------------------------------------
+# SCHISM_CHECK_TARGET(TARGET, NAME, ADDCFLAGS, PROGRAM)
+# -----------------------------------------------------
 AC_DEFUN([SCHISM_CHECK_TARGET], [
 	AC_MSG_CHECKING([for $1 support])
 	old_CFLAGS="$CFLAGS"
 	CFLAGS="$CFLAGS $1 $3"
 	AC_COMPILE_IFELSE(
-		[AC_LANG_PROGRAM([[]], [[return 0;]])],
+		[AC_LANG_SOURCE($4)],
 		[have_compile_flag=yes],
 		[have_compile_flag=no])
 	AC_MSG_RESULT([$have_compile_flag])
@@ -1058,11 +1058,46 @@ AC_DEFUN([SCHISM_CHECK_TARGET], [
 	fi
 ])
 
-SCHISM_CHECK_TARGET([-msse2],     [SCHISM_SSE2],     [])
-SCHISM_CHECK_TARGET([-msse4.1],   [SCHISM_SSE41],    [])
-SCHISM_CHECK_TARGET([-mavx2],     [SCHISM_AVX2],     [])
-SCHISM_CHECK_TARGET([-mavx512bw], [SCHISM_AVX512BW], [])
-SCHISM_CHECK_TARGET([-maltivec],  [SCHISM_ALTIVEC],  [-mabi=altivec])
+SCHISM_CHECK_TARGET([-msse2],     [SCHISM_SSE2],     [],
+[[
+#include <immintrin.h>
+extern __m128i test(__m128i a, __m128i b)
+{
+	return _mm_min_epu8(a, b);
+}
+]])
+SCHISM_CHECK_TARGET([-msse4.1],   [SCHISM_SSE41],    [],
+[[
+#include <immintrin.h>
+extern __m128i test(__m128i a, __m128i b)
+{
+	return _mm_min_epi8(a, b);
+}
+]])
+SCHISM_CHECK_TARGET([-mavx2],     [SCHISM_AVX2],     [],
+[[
+#include <immintrin.h>
+extern __m256i test(__m256i a, __m256i b)
+{
+	return _mm256_min_epi8(a, b);
+}
+]])
+SCHISM_CHECK_TARGET([-mavx512bw], [SCHISM_AVX512BW], [],
+[[
+#include <immintrin.h>
+extern __m512i test(__m512i a, __m512i b)
+{
+	return _mm512_min_epi8(a, b);
+}
+]])
+SCHISM_CHECK_TARGET([-maltivec],  [SCHISM_ALTIVEC],  [-mabi=altivec],
+[[
+#include <altivec.h>
+extern vector signed char test(vector signed char a, vector signed char b)
+{
+	return vec_min(a, b);
+}
+]])
 
 dnl --------------------------------------------------------------------------
 dnl check for #pragma pack(push, 1) support
