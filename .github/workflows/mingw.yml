@@ -364,7 +364,7 @@ jobs:
       - name: 'Build package'
         run: |
           export PATH="$HOME/llvm-mingw/bin:$PATH"
-          export PKG_CONFIG_PATH="$HOME/prefix/lib/pkgconfig"
+          export PKG_CONFIG_LIBDIR="$HOME/prefix/lib/pkgconfig"
           cd schism
           autoreconf -I"$HOME/prefix/share/aclocal" -i
           mkdir build
