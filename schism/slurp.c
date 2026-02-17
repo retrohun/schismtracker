@@ -107,6 +107,11 @@ finished: ; /* this semicolon is important because C */
 	slurp_rewind(t);
 #endif
 
+#ifdef USE_ZSTD
+	slurp_zstd(t);
+	slurp_rewind(t);
+#endif
+
 	uint8_t *mmdata;
 	size_t mmlen;
 
@@ -843,7 +848,7 @@ void slurp_unlimit_seek(slurp_t *t)
 /* ------------------------------------------------------------------------ */
 /* slurp support for decompression */
 
-#define CHUNK_SIZE (4096)
+#define DEF_CHUNK_SIZE (4096)
 
 struct slurp_decompress {
 	/* the original file as passed into slurp_decompress */
@@ -851,13 +856,22 @@ struct slurp_decompress {
 
 	struct slurp_decompress_vtable vtbl;
 
-	unsigned char buf[CHUNK_SIZE];
-
 	/* error flag */
 	unsigned int err : 1;
 	unsigned int done : 1;
+	/* only for zstd; the format doesn't HAVE a "EOF" flag, which means
+	 * we might be done if the frame finished; if so, set the EOF flag
+	 * instead of dying */
+	unsigned int maybe_done : 1;
 
 	void *opaque;
+
+	/* minimum output buffer size */
+	size_t minoutputbufsz;
+
+	/* input buffer size */
+	size_t bufsz;
+	unsigned char buf[SCHISM_FAM_SIZE];
 };
 
 static size_t slurp_decompress_read(void *opaque, disko_t *ds, size_t size)
@@ -868,6 +882,8 @@ static size_t slurp_decompress_read(void *opaque, disko_t *ds, size_t size)
 
 	if (zl->err || zl->done)
 		return 0; /* Uh oh */
+
+	size = MAX(zl->minoutputbufsz, size);
 
 	buf = disko_memstart(ds, size);
 	if (!buf) {
@@ -880,9 +896,14 @@ static size_t slurp_decompress_read(void *opaque, disko_t *ds, size_t size)
 		int res;
 
 		if (zl->vtbl.input(zl->opaque, NULL, 0) == 0) {
-			size_t z = slurp_read(&zl->fp, zl->buf, sizeof(zl->buf));
+			size_t z = slurp_read(&zl->fp, zl->buf, zl->bufsz);
 			if (!z) {
-				zl->err = 1;
+				if (zl->maybe_done) {
+					zl->done = 1;
+					zl->maybe_done = 0;
+				} else {
+					zl->err = 1;
+				}
 				goto ZL_end;
 			}
 
@@ -896,6 +917,11 @@ static size_t slurp_decompress_read(void *opaque, disko_t *ds, size_t size)
 		if (res == SLURP_DEC_DONE) {
 			zl->done = 1;
 			break;
+		}
+
+		if (res == SLURP_DEC_OK_OR_DONE) {
+			zl->maybe_done = 1;
+			continue;
 		}
 
 		zl->err = 1;
@@ -920,8 +946,12 @@ static void slurp_decompress_closure(void *opaque)
 int slurp_decompress(slurp_t *fp, const struct slurp_decompress_vtable *vtbl)
 {
 	struct slurp_decompress *zl;
+	size_t inbufsz;
 
-	zl = mem_calloc(1, sizeof(*zl));
+	inbufsz = vtbl->inbufsz ? vtbl->inbufsz() : DEF_CHUNK_SIZE;
+
+	zl = mem_calloc(1, sizeof(*zl) + inbufsz);
+	zl->bufsz = inbufsz;
 
 	memcpy(&zl->vtbl, vtbl, sizeof(struct slurp_decompress_vtable));
 

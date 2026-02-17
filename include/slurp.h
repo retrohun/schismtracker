@@ -216,12 +216,19 @@ int slurp_bzip2(slurp_t *src);
 int slurp_xz(slurp_t *src);
 #endif
 
+#ifdef USE_ZSTD
+/* fmt/zstd.c */
+int slurp_zstd(slurp_t *src);
+#endif
+
 int slurp_available(slurp_t *fp, size_t x, int whence);
 
 /* ------------------------------------------------------------------------ */
 
 #define SLURP_DEC_OK (0)
 #define SLURP_DEC_DONE (1)
+/* might be either... */
+#define SLURP_DEC_OK_OR_DONE (2)
 
 struct slurp_decompress_vtable {
 	/* returns an opaque pointer that represents the inflate */
@@ -239,6 +246,11 @@ struct slurp_decompress_vtable {
 	 * calling these functions again. */
 	size_t (*output)(void *opaque, void *buf, size_t len);
 	size_t (*input)(void *opaque, void *buf, size_t len);
+
+	/* Minimum recommended outbuf size */
+	size_t (*outbufsz)(void);
+	/* Minimum recommended inbuf size */
+	size_t (*inbufsz)(void);
 };
 
 int slurp_decompress(slurp_t *fp, const struct slurp_decompress_vtable *vtbl);

@@ -506,6 +506,17 @@ endif
 
 endif
 
+if USE_ZSTD
+files_zstd = \
+	fmt/zstd.c
+cflags_zstd=$(ZSTD_CFLAGS)
+
+if LINK_TO_ZSTD
+libs_zstd=$(ZSTD_LIBS)
+endif
+
+endif
+
 if USE_AVFORMAT
 files_avformat = \
 	fmt/avformat.c
@@ -722,7 +733,8 @@ schismtracker_SOURCES = \
 	$(files_mt)				\
 	$(files_zlib)			\
 	$(files_bzip2)			\
-	$(files_lzma)
+	$(files_lzma)			\
+	$(files_zstd)
 
 # have version.o rely on all files
 schism/version.$(OBJEXT): $(filter-out schism/version.$(OBJEXT),$(schismtrackertest_OBJECTS)) $(HEADERS)
@@ -734,7 +746,7 @@ component_cflags = $(cflags_alsa) $(cflags_oss) \
 	$(cflags_wiiu) $(cflags_macos) $(cflags_os2) \
 	$(cflags_xbox) $(UTF8PROC_CFLAGS) $(cflags_avformat) \
 	$(cflags_asio) $(cflags_zlib) $(cflags_bzip2) \
-	$(cflags_lzma)
+	$(cflags_lzma) $(cflags_zstd)
 schismtracker_CPPFLAGS = -I$(srcdir)/include -I. $(cppflags_wii) $(cppflags_wiiu)
 schismtracker_CFLAGS = $(AM_CFLAGS) $(component_cflags)
 schismtracker_OBJCFLAGS = $(AM_OBJCFLAGS) $(component_cflags)
@@ -748,7 +760,7 @@ schismtracker_LDADD = $(LIBM) $(libs_sdl3) \
 	$(libs_sdl2) $(libs_sdl12) $(libs_macos) \
 	$(libs_os2) $(libs_xbox) $(libs_avformat) \
 	$(libs_asio) $(libs_zlib) $(libs_bzip2) \
-	$(libs_lzma)
+	$(libs_lzma) $(libs_zstd)
 schismtracker_LDFLAGS = $(ldflags_macosx) \
 	$(ldflags_wii)
 

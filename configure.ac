@@ -163,6 +163,11 @@ AC_ARG_WITH([lzma],
 	[],
 	[with_lzma=check])
 
+AC_ARG_WITH([zstd],
+	[AS_HELP_STRING([--with-zstd],[Build with zstd decompression support @<:@default=check@:>@])],
+	[],
+	[with_zstd=check])
+
 AC_ARG_WITH([avformat],
 	[AS_HELP_STRING([--with-avformat],[Build with libavformat support @<:default=check@:>@])],
 	[],
@@ -207,6 +212,11 @@ AC_ARG_ENABLE(lzma-linking,
 	AS_HELP_STRING([--enable-lzma-linking], [Link to liblzma rather than loading at runtime @<:default=check@:>@]),
 	LZMA_LINKING=$enableval,
 	LZMA_LINKING=check)
+
+AC_ARG_ENABLE(zstd-linking,
+	AS_HELP_STRING([--enable-zstd-linking], [Link to zstd rather than loading at runtime @<:default=check@:>@]),
+	ZSTD_LINKING=$enableval,
+	ZSTD_LINKING=check)
 
 dnl We disable the tests by default. This is primarily to aid package maintainers,
 dnl who would be surprised to find a whole new binary :)
@@ -852,6 +862,7 @@ SCHISM_PKGCONFIG_CHECK([USE_AVFORMAT], [LINK_TO_AVFORMAT], [$with_avformat], [$A
 SCHISM_PKGCONFIG_CHECK([USE_ZLIB], [LINK_TO_ZLIB], [$with_zlib], [$ZLIB_LINKING], [zlib], [ZLIB], [USE_ZLIB], [ZLIB_DYNAMIC_LOAD], [zlib])
 SCHISM_PKGCONFIG_CHECK([USE_BZIP2], [LINK_TO_BZIP2], [$with_bzip2], [$BZIP2_LINKING], [bzip2], [BZIP2], [USE_BZIP2], [BZIP2_DYNAMIC_LOAD], [bzip2])
 SCHISM_PKGCONFIG_CHECK([USE_LZMA], [LINK_TO_LZMA], [$with_lzma], [$LZMA_LINKING], [liblzma], [LZMA], [USE_LZMA], [LZMA_DYNAMIC_LOAD], [liblzma])
+SCHISM_PKGCONFIG_CHECK([USE_ZSTD], [LINK_TO_ZSTD], [$with_zstd], [$ZSTD_LINKING], [libzstd], [ZSTD], [USE_ZSTD], [ZSTD_DYNAMIC_LOAD], [zstd])
 SCHISM_PKGCONFIG_CHECK([USE_SDL3], [LINK_TO_SDL3], [$with_sdl3], [$SDL3_LINKING], [sdl3], [SDL3], [SCHISM_SDL3], [SDL3_DYNAMIC_LOAD], [SDL 3])
 SCHISM_PKGCONFIG_CHECK([USE_SDL2], [LINK_TO_SDL2], [$with_sdl2], [$SDL2_LINKING], [sdl2], [SDL2], [SCHISM_SDL2], [SDL2_DYNAMIC_LOAD], [SDL 2])
 

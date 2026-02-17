@@ -313,8 +313,8 @@ testresult_t test_slurp_mmap(void)
 }
 #endif
 
-#ifdef USE_ZLIB
-testresult_t test_slurp_gzip(void)
+static testresult_t test_slurp_decompress(int (*init)(void), int (*start)(slurp_t *fp), void (*quit)(void),
+	const unsigned char *data, size_t datalen)
 {
 	testresult_t r;
 	slurp_t fp;
@@ -328,27 +328,40 @@ testresult_t test_slurp_gzip(void)
 	};
 
 	/* should never happen */
-	ASSERT(slurp_memstream(&fp, (uint8_t *)expected_result_gz, sizeof(expected_result_gz)) >= 0);
+	ASSERT(slurp_memstream(&fp, data, datalen) >= 0);
 
-	/* -1 is an error (e.g. zlib failed to load) */
-	REQUIRE(gzip_init() >= 0);
-	/* -1 is an error (e.g. zlib failed to decompress) */
-	REQUIRE(slurp_gzip(&fp) >= 0);
+	/* -1 is an error (e.g. lib failed to load) */
+	REQUIRE(init() >= 0);
+	/* -1 is an error (e.g. lib failed to decompress) */
+	REQUIRE(start(&fp) >= 0);
 
 	r = test_slurp_common(&fp);
 
 	unslurp(&fp);
-	gzip_quit();
+	quit();
 
 	return r;
+}
+
+#ifdef USE_ZLIB
+testresult_t test_slurp_gzip(void)
+{
+	static const unsigned char expected_result_gz[] = {
+		'\037', '\213', '\010', '\010', '\234', '\107', '\333', '\150', '\002', '\003', '\145', '\170', '\160', '\145', '\143', '\164',
+		'\145', '\144', '\137', '\162', '\145', '\163', '\165', '\154', '\164', '\000', '\113', '\114', '\112', '\126', '\110', '\111',
+		'\115', '\123', '\110', '\317', '\310', '\124', '\060', '\064', '\062', '\126', '\060', '\061', '\065', '\123', '\060', '\267',
+		'\260', '\344', '\362', '\124', '\310', '\311', '\054', '\113', '\125', '\310', '\314', '\123', '\110', '\124', '\110', '\317',
+		'\114', '\314', '\053', '\121', '\110', '\052', '\115', '\316', '\116', '\055', '\321', '\343', '\112', '\312', '\111', '\055',
+		'\115', '\317', '\320', '\343', '\002', '\000', '\240', '\062', '\045', '\375', '\072', '\000', '\000', '\000'
+	};
+
+	return test_slurp_decompress(gzip_init, slurp_gzip, gzip_quit, expected_result_gz, sizeof(expected_result_gz));
 }
 #endif
 
 #ifdef USE_BZIP2
 testresult_t test_slurp_bzip2(void)
 {
-	testresult_t r;
-	slurp_t fp;
 	static const unsigned char expected_result_bz2[] = {
 		'\102', '\132', '\150', '\071', '\061', '\101', '\131', '\046', '\123', '\131', '\203', '\024', '\220', '\211', '\000', '\000',
 		'\015', '\135', '\200', '\000', '\020', '\100', '\001', '\077', '\340', '\000', '\040', '\077', '\355', '\007', '\000', '\040',
@@ -358,28 +371,13 @@ testresult_t test_slurp_bzip2(void)
 		'\155', '\352', '\062', '\104', '\135', '\311', '\024', '\341', '\102', '\102', '\014', '\122', '\102', '\044',
 	};
 
-	/* should never happen */
-	ASSERT(slurp_memstream(&fp, (uint8_t *)expected_result_bz2, sizeof(expected_result_bz2)) >= 0);
-
-	/* -1 is an error (e.g. zlib failed to load) */
-	REQUIRE(bzip2_init() >= 0);
-	/* -1 is an error (e.g. zlib failed to decompress) */
-	REQUIRE(slurp_bzip2(&fp) >= 0);
-
-	r = test_slurp_common(&fp);
-
-	unslurp(&fp);
-	bzip2_quit();
-
-	return r;
+	return test_slurp_decompress(bzip2_init, slurp_bzip2, bzip2_quit, expected_result_bz2, sizeof(expected_result_bz2));
 }
 #endif
 
 #ifdef USE_LZMA
 testresult_t test_slurp_xz(void)
 {
-	testresult_t r;
-	slurp_t fp;
 	static const unsigned char expected_result_xz[] = {
 		'\375', '\067', '\172', '\130', '\132', '\000', '\000', '\004', '\346', '\326', '\264', '\106', '\004', '\300', '\076', '\072',
 		'\041', '\001', '\034', '\000', '\000', '\000', '\000', '\000', '\000', '\000', '\000', '\000', '\030', '\077', '\025', '\236',
@@ -391,19 +389,21 @@ testresult_t test_slurp_xz(void)
 		'\037', '\266', '\363', '\175', '\001', '\000', '\000', '\000', '\000', '\004', '\131', '\132',
 	};
 
-	/* should never happen */
-	ASSERT(slurp_memstream(&fp, (uint8_t *)expected_result_xz, sizeof(expected_result_xz)) >= 0);
+	return test_slurp_decompress(xz_init, slurp_xz, xz_quit, expected_result_xz, sizeof(expected_result_xz));
+}
+#endif
 
-	/* -1 is an error (e.g. zlib failed to load) */
-	REQUIRE(xz_init() >= 0);
-	/* -1 is an error (e.g. zlib failed to decompress) */
-	REQUIRE(slurp_xz(&fp) >= 0);
+#ifdef USE_ZSTD
+testresult_t test_slurp_zstd(void)
+{
+	static unsigned char expected_result_zstd[] = {
+		'\050', '\265', '\057', '\375', '\044', '\072', '\321', '\001', '\000', '\141', '\142', '\143', '\040', '\144', '\145', '\146',
+		'\040', '\147', '\150', '\151', '\040', '\061', '\062', '\063', '\040', '\064', '\065', '\066', '\040', '\067', '\070', '\071',
+		'\012', '\111', '\040', '\154', '\151', '\166', '\145', '\040', '\151', '\156', '\040', '\141', '\040', '\147', '\151', '\141',
+		'\156', '\164', '\040', '\142', '\165', '\143', '\153', '\145', '\164', '\056', '\012', '\142', '\154', '\145', '\165', '\147',
+		'\150', '\056', '\012', '\367', '\153', '\060', '\247',
+	};
 
-	r = test_slurp_common(&fp);
-
-	unslurp(&fp);
-	xz_quit();
-
-	return r;
+	return test_slurp_decompress(zstd_init, slurp_zstd, zstd_quit, expected_result_zstd, sizeof(expected_result_zstd));
 }
 #endif

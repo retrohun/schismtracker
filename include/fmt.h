@@ -306,5 +306,8 @@ void bzip2_quit(void);
 int xz_init(void);
 void xz_quit(void);
 
+int zstd_init(void);
+void zstd_quit(void);
+
 #endif /* SCHISM_FMT_H_ */
 

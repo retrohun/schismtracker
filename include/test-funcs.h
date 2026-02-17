@@ -148,6 +148,9 @@ TEST_FUNC(test_slurp_bzip2)
 #ifdef USE_LZMA
 TEST_FUNC(test_slurp_xz)
 #endif
+#ifdef USE_ZSTD
+TEST_FUNC(test_slurp_zstd)
+#endif
 
 TEST_FUNC(test_config_file_defined_values)
 TEST_FUNC(test_config_file_undefined_values_in_defined_section)
