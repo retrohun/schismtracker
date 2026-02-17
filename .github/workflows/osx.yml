@@ -442,10 +442,12 @@ jobs:
         autoreconf -i
         mkdir build
         cd build
-        ../configure --enable-tests --enable-sdl2-linking $CONFIGURE_FLAGS
+        ../configure --enable-tests $CONFIGURE_FLAGS
         make
 
     - name: 'Run test suite'
       run: |
         cd build
+        # Need to add this to the dyld search path or else we fail to load
+        export DYLD_FALLBACK_LIBRARY_PATH="$(brew --prefix zstd)/lib:$(brew --prefix sdl2)/lib"
         ./schismtrackertest
