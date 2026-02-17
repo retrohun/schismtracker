@@ -1542,7 +1542,7 @@ charset_error_t charset_iconv_v2(struct charset_iconv_v2 *x, char **inbuf, size_
 	} else
 #endif
 	{
-		decoder->in = *inbuf;
+		decoder->in = (const unsigned char *)*inbuf;
 		decoder->offset = 0;
 		decoder->size = *inbufsz;
 	}

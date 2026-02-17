@@ -94,7 +94,6 @@ static struct cfg_key *_get_key(struct cfg_section *section, const char *key_nam
 /* skip past any comments and save them. return: length of comments */
 static void _parse_comments(slurp_t *fp, disko_t *comments)
 {
-	char *new_comments, *tmp;
 	int64_t len;
 	int64_t prev, start;
 
@@ -142,8 +141,6 @@ static void _parse_comments(slurp_t *fp, disko_t *comments)
 /* parse a [section] line. return: 1 if all's well, 0 if it didn't work */
 static int _parse_section(cfg_file_t *cfg, char *line, struct cfg_section **cur_section, disko_t *comments)
 {
-	char *tmp;
-
 	if (line[0] != '[' || line[strlen(line) - 1] != ']')
 		return 0;
 
@@ -164,7 +161,7 @@ static int _parse_section(cfg_file_t *cfg, char *line, struct cfg_section **cur_
 
 		/* re-open it */
 		disko_memclose(comments, 1);
-		(*cur_section)->comments = comments->data;
+		(*cur_section)->comments = (char *)comments->data;
 
 		disko_memopen(comments);
 	}
@@ -176,7 +173,7 @@ static int _parse_section(cfg_file_t *cfg, char *line, struct cfg_section **cur_
 static int _parse_keyval(cfg_file_t *cfg, char *line, struct cfg_section *cur_section, disko_t *comments)
 {
 	struct cfg_key *key;
-	char *k, *v, *tmp;
+	char *k, *v;
 
 	if (!strchr(line, '=')) {
 		fprintf(stderr, "%s: malformed line \"%s\"; ignoring\n", cfg->filename, line);
@@ -213,7 +210,7 @@ static int _parse_keyval(cfg_file_t *cfg, char *line, struct cfg_section *cur_se
 
 		/* re-open it */
 		disko_memclose(comments, 1);
-		key->comments = comments->data;
+		key->comments = (char *)comments->data;
 
 		disko_memopen(comments);
 	}
@@ -255,10 +252,8 @@ static struct cfg_section *_free_section(struct cfg_section *section)
 
 static int cfg_read_slurp(cfg_file_t *cfg, slurp_t *fp)
 {
-	size_t len; /* how far away the end of the token is from the start */
 	struct cfg_section *cur_section = NULL;
 	disko_t comments;
-	char *tmp;
 
 	if (disko_memopen(&comments) < 0)
 		return 0;
@@ -315,7 +310,7 @@ static int cfg_read_slurp(cfg_file_t *cfg, slurp_t *fp)
 
 	disko_memclose(&comments, 1);
 
-	cfg->eof_comments = comments.data;
+	cfg->eof_comments = (char *)comments.data;
 	cfg->dirty = 0;
 
 	return 1;

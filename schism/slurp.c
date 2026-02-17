@@ -244,7 +244,6 @@ int slurp_stdio(slurp_t *t, FILE *fp)
 static int slurp_stdio_open_(slurp_t *t, const char *filename, SCHISM_UNUSED uint64_t size)
 {
 	FILE *fp;
-	void (*closure)(slurp_t *);
 	int r;
 
 	fp = os_fopen(filename, "rb");
@@ -877,7 +876,6 @@ struct slurp_decompress {
 static size_t slurp_decompress_read(void *opaque, disko_t *ds, size_t size)
 {
 	struct slurp_decompress *zl = opaque;
-	size_t i;
 	void *buf;
 
 	if (zl->err || zl->done)

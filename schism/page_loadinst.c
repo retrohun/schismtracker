@@ -371,7 +371,7 @@ static int file_list_handle_text_input(const char *text)
 	int success;
 
 	/* can't do anything? */
-	if (slash_search_mode + 1 >= (int)ARRAY_SIZE(slash_search_str))
+	if (slash_search_mode > (int)ARRAY_SIZE(slash_search_str))
 		return 0;
 
 	if (slash_search_mode < 0)
@@ -387,11 +387,18 @@ static int file_list_handle_text_input(const char *text)
 		if (ucs4[i] < 32)
 			continue;
 
-		if (!(slash_search_mode > -1 || (f && (f->type & TYPE_DIRECTORY))))
+		if (!((slash_search_mode > -1) || (f && (f->type & TYPE_DIRECTORY))))
 			continue;
 
 		if (slash_search_mode + 1 >= (int)ARRAY_SIZE(slash_search_str))
 			break; /* can't do anything */
+
+		/* Even though the assignment above specifically sets
+		 * slash_search_mode to 0, gcc is convinced that this
+		 * could be -1. Silence the warning by explicitly
+		 * pointing out that this is impossible */
+		if (slash_search_mode < 0)
+			SCHISM_UNREACHABLE;
 
 		slash_search_str[slash_search_mode++] = ucs4[i];
 		reposition_at_slash_search();

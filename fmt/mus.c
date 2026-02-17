@@ -126,7 +126,6 @@ int fmt_mus_load_song(song_t *song, slurp_t *fp, SCHISM_UNUSED uint32_t lflags)
 	uint8_t patch_samples[128] = {0};
 	uint8_t patch_percussion[128] = {0};
 	uint8_t nsmp = 1; // Next free sample
-	uint64_t len;
 
 	if (!read_mus_header(&hdr, fp))
 		return LOAD_UNSUPPORTED;

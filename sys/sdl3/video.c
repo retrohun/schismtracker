@@ -813,10 +813,6 @@ SCHISM_HOT static void sdl3_video_blit(void)
 		int pitch;
 		SDL_FRect dstrect;
 
-		/* YUV */
-		unsigned char *planes[3];
-		uint32_t pitches[3];
-
 		if (cfg_video_want_fixed) {
 			dstrect.x = 0;
 			dstrect.y = 0;

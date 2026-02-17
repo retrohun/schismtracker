@@ -525,7 +525,7 @@ static int aiff_header(disko_t *fp, int bits, int channels, uint32_t rate,
 			Marker Markers[];
 		} MarkerChunk; */
 		uint32_t ckSize, dw;
-		uint16_t mid, w;
+		uint16_t w;
 
 		disko_write(fp, "MARK", 4);
 

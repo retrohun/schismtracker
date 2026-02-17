@@ -142,7 +142,6 @@ static void load_xm_patterns(song_t *song, struct xm_file_header *hdr, slurp_t *
 	int b;
 	uint16_t rows;
 	uint16_t bytes;
-	uint64_t end; // should be same data type as slurp_t's length
 	song_note_t *note;
 	unsigned int lostpat = 0;
 	unsigned int lostfx = 0;

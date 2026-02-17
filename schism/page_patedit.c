@@ -872,10 +872,10 @@ static void pattern_selection_system_copyout(void)
 			}
 			len += 3;
 			if (cur_note->instrument)
-				snprintf(str+len, 3, "%02d", cur_note->instrument);
+				snprintf(str+len, 3, "%02d", cur_note->instrument % 100);
 			else
 				str[len] = str[len+1] = '.';
-			snprintf(str+len+3, 3, "%02d", cur_note->volparam);
+			snprintf(str+len+3, 3, "%02d", cur_note->volparam % 100);
 			switch (cur_note->voleffect) {
 			case VOLFX_VOLUME:         str[len+2] = 'v';break;
 			case VOLFX_PANNING:        str[len+2] = 'p';break;

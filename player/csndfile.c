@@ -1934,9 +1934,6 @@ uint32_t csf_get_length(song_t *csf)
 {
 	/* This sucks, but it's the simplest thing I can come up with right now
 	 * TODO: optimize this further; */
-	uint32_t nchan;
-	song_voice_t *chan;
-	int32_t buf[MIXBUFFERSIZE * 2];
 	uint32_t total;
 #ifdef USE_THREADS
 	song_t *csfcopy;
