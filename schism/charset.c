@@ -1186,7 +1186,7 @@ static void ce_write_icon(void *userdata, const void *buf, size_t sz)
 		SCHISM_STATIC_ASSERT(sizeof(x->uniconv) >= MAXCHAROUT, "a");
 		SCHISM_RUNTIME_ASSERT((sz & 1) == 0, "buffer size is always multiple of 2");
 
-		memcpy(x->uniconv, buf, sz);
+		memcpy(x->uniconv + x->uniconvlen, buf, sz);
 		x->uniconvlen += sz;
 	} else
 #endif
